@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Pipenv
+# Pipfile.lock is intentionally tracked for reproducibility
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# IDE - JetBrains
+.idea/
+
+# IDE - VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data - raw images and processed outputs (large files)
+data/raw/
+data/processed/
+data/splits/
+
+# Model checkpoints and outputs
+models/
+checkpoints/
+*.pkl
+*.npy
+*.npz
+*.h5
+*.pt
+*.pth
+
+# Logs
+*.log
+logs/
+
+# Misc
+*.tmp
+*.bak
