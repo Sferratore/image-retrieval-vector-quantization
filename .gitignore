@@ -33,10 +33,6 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Data - raw images and processed outputs (large files)
-data/raw/
-data/processed/
-data/splits/
 
 # Model checkpoints and outputs
 models/

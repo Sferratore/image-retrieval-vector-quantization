@@ -1,5 +1,4 @@
 import cv2
-import numpy as np
 from pathlib import Path
 
 # cartelle
@@ -30,8 +29,8 @@ for img_path in input_dir.rglob("*"):
     # conversione BGR → Luv
     img_luv = cv2.cvtColor(img, cv2.COLOR_BGR2Luv)
 
-    # salva array numpy
-    save_path = save_dir / (img_path.stem + ".npy")
-    np.save(save_path, img_luv)
+    # salva immagine
+    save_path = save_dir / (img_path.stem + ".jpg")
+    cv2.imwrite(str(save_path), img_luv)
 
 print("Preprocessing completato.")
