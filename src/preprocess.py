@@ -2,8 +2,8 @@ import cv2
 from pathlib import Path
 
 # cartelle
-input_dir = Path(__file__).parent / "raw"
-output_dir = Path(__file__).parent / "processed"
+input_dir = Path(__file__).parent.parent / "data" / "raw"
+output_dir = Path(__file__).parent.parent / "data" / "processed"
 
 size = 128
 
