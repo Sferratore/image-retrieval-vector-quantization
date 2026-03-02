@@ -25,34 +25,54 @@ def extract_block_features(img):
     Returns:
         feats: np.ndarray of shape (n_blocks, 6)
     """
-    # unpack spatial dimensions; _ discards the channel count (always 3)
+    # img is a 3D array: (height, width, 3 channels).
+    # We read its dimensions here. The _ discards the third value (Determines L, u o v)
+    # because we don't need to store the channel count explicitly.
     h, w, _ = img.shape
 
-    # will accumulate one feature vector per block
+    # Empty list that will collect one 6-number vector for each block.
+    # At the end this list will have as many entries as there are blocks in the image.
     feats = []
 
-    # slide over rows in steps of BLOCK_SIZE (non-overlapping)
+    # Outer loop: move down the image one block at a time.
+    # y is the row index of the top-left corner of the current block.
+    # We jump BLOCK_SIZE pixels at each step so blocks don't overlap.
     for y in range(0, h, BLOCK_SIZE):
-        # slide over columns in steps of BLOCK_SIZE (non-overlapping)
+
+        # Inner loop: move across the image one block at a time.
+        # x is the column index of the top-left corner of the current block.
+        # Same non-overlapping step as above.
         for x in range(0, w, BLOCK_SIZE):
-            # crop the block: rows [y, y+BLOCK_SIZE), cols [x, x+BLOCK_SIZE)
-            # shape: (BLOCK_SIZE, BLOCK_SIZE, 3)
+
+            # Cut out the current block from the image using array slicing.
+            # Rows from y to y+BLOCK_SIZE, columns from x to x+BLOCK_SIZE.
+            # The result is a small 3D array of shape (BLOCK_SIZE, BLOCK_SIZE, 3).
             block = img[y:y+BLOCK_SIZE, x:x+BLOCK_SIZE]
 
-            # average pixel value for each channel (L, u, v) across the block
-            # axis=(0,1) collapses the two spatial axes → shape (3,)
+            # Compute the average pixel value for each color channel (L, u, v)
+            # across all pixels inside this block.
+            # axis=(0,1) means "collapse rows and columns" so we get one average
+            # per channel. Result is an array of 3 numbers: [mean_L, mean_u, mean_v].
             mean = block.mean(axis=(0,1))
 
-            # spread of pixel values for each channel across the block
-            # axis=(0,1) collapses the two spatial axes → shape (3,)
+            # Compute the variance of pixel values for each channel inside this block.
+            # Variance measures how much the pixel values differ from the mean.
+            # A low variance means the block is uniform in color;
+            # a high variance means there is a lot of color variation inside it.
+            # Same axis logic as above. Result: [var_L, var_u, var_v].
             var = block.var(axis=(0,1))
 
-            # join mean and variance into a single 6-dim vector [mean_L, mean_u, mean_v, var_L, var_u, var_v]
+            # Concatenate mean and variance into a single flat array of 6 numbers:
+            # [mean_L, mean_u, mean_v, var_L, var_u, var_v].
+            # This is the feature vector that represents this block.
             feat = np.concatenate([mean, var])
 
+            # Append this block's feature vector to the list.
             feats.append(feat)
 
-    # stack all per-block vectors into a 2D array → shape (n_blocks, 6)
+    # Convert the Python list of 6-number vectors into a 2D NumPy array.
+    # Final shape: (number_of_blocks, 6).
+    # Each row is one block, each column is one feature.
     return np.array(feats)
 
 
@@ -64,21 +84,58 @@ def assign_regions(n_blocks_y, n_blocks_x):
     Returns:
         region_map: np.ndarray of shape (n_blocks_y, n_blocks_x) with region IDs
     """
+    # Create a 2D grid of zeros with the same layout as the block grid.
+    # Each cell corresponds to one block and will be filled with a region ID (0 to GRID*GRID-1).
+    # For a 128x128 image with BLOCK_SIZE=2 and GRID=3: shape is (64, 64).
     region_map = np.zeros((n_blocks_y, n_blocks_x), dtype=int)
 
-    ry = n_blocks_y // GRID  # block rows per region
-    rx = n_blocks_x // GRID  # block cols per region
+    # How many block-rows fit in one region vertically.
+    # e.g. 64 block-rows / 3 = 21 block-rows per region (integer division).
+    ry = n_blocks_y // GRID
 
+    # How many block-columns fit in one region horizontally.
+    # e.g. 64 block-cols / 3 = 21 block-cols per region (integer division).
+    rx = n_blocks_x // GRID
+
+    # Counter that gives each region a unique ID, starting from 0.
     r = 0
+
+    # Outer loop: iterate over the rows of the GRID (top to bottom).
+    # gy goes 0, 1, 2 for a 3x3 grid.
     for gy in range(GRID):
+
+        # Inner loop: iterate over the columns of the GRID (left to right).
+        # gx goes 0, 1, 2 for a 3x3 grid.
         for gx in range(GRID):
+
+            # Compute the top block-row index of this region in the block grid.
             y0 = gy * ry
+
+            # Compute the bottom block-row index (exclusive) of this region.
             y1 = (gy + 1) * ry
+
+            # Compute the leftmost block-column index of this region.
             x0 = gx * rx
+
+            # Compute the rightmost block-column index (exclusive) of this region.
             x1 = (gx + 1) * rx
+
+            # Fill all cells in this rectangular area of the block grid with
+            # the current region ID r. Every block inside this rectangle now
+            # knows it belongs to region r.
             region_map[y0:y1, x0:x1] = r
+
+            # Move to the next region ID for the next iteration.
             r += 1
 
+    # Return the completed map. Each cell holds the region ID of that block.
+    # Example for GRID=3, the map looks conceptually like:
+    # [ 0  0 ... 1  1 ... 2  2 ... ]
+    # [ 0  0 ... 1  1 ... 2  2 ... ]
+    # [ 3  3 ... 4  4 ... 5  5 ... ]
+    # [ 3  3 ... 4  4 ... 5  5 ... ]
+    # [ 6  6 ... 7  7 ... 8  8 ... ]
+    # [ 6  6 ... 7  7 ... 8  8 ... ]
     return region_map
 
 
