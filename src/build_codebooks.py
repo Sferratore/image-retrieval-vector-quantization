@@ -180,7 +180,13 @@ for file in INPUT_DIR.rglob("*.jpg"):
 
     codebooks = build_codebooks(img)                   # list of GRID*GRID codebooks
 
-    save_path = OUTPUT_DIR / (file.stem + ".npz")
+    # Preserve the category subfolder (e.g. data/codebooks/dinosaurs/400.npz)
+    # so that category labels can be read directly from the path in retrieve.py
+    relative  = file.relative_to(INPUT_DIR)            # e.g. Corel-1K/dinosaurs/400.jpg
+    save_dir  = OUTPUT_DIR / relative.parent           # e.g. data/codebooks/Corel-1K/dinosaurs
+    save_dir.mkdir(parents=True, exist_ok=True)
+
+    save_path = save_dir / (file.stem + ".npz")
 
     np.savez(save_path, codebooks=codebooks)           # save all codebooks for this image
 
