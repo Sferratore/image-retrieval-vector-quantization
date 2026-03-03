@@ -176,7 +176,8 @@ def build_codebooks(img):
 # --- Main loop: process every preprocessed image ---
 for file in INPUT_DIR.rglob("*.jpg"):
 
-    img = cv2.imread(str(file))                        # load (128, 128, 3) Luv image
+    img = cv2.imread(str(file))                        # load (128, 128, 3) BGR image
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2Luv)         # convert to Luv inline
 
     codebooks = build_codebooks(img)                   # list of GRID*GRID codebooks
 

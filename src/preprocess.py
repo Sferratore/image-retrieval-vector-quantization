@@ -26,11 +26,8 @@ for img_path in input_dir.rglob("*"):
     # resize
     img = cv2.resize(img, (size, size))
 
-    # conversione BGR → Luv
-    img_luv = cv2.cvtColor(img, cv2.COLOR_BGR2Luv)
-
-    # salva immagine
+    # salva immagine (BGR, senza conversione colore)
     save_path = save_dir / (img_path.stem + ".jpg")
-    cv2.imwrite(str(save_path), img_luv)
+    cv2.imwrite(str(save_path), img)
 
 print("Preprocessing completato.")
