@@ -8,7 +8,7 @@ from sklearn.cluster import KMeans
 INPUT_DIR = Path(__file__).parent.parent / "data" / "processed"
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "codebooks"
 
-BLOCK_SIZE = 2   # size in pixels of each block (BLOCK_SIZE x BLOCK_SIZE)
+BLOCK_SIZE = 4   # size in pixels of each block (BLOCK_SIZE x BLOCK_SIZE)
 GRID = 3         # image is divided into a GRID x GRID spatial grid of regions
 K = 12           # number of codewords per codebook (VQ codebook size)
 
