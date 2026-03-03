@@ -12,7 +12,7 @@ CODEBOOKS_DIR = ROOT / "data" / "codebooks"
 # the feature vectors will be incompatible and results will be meaningless.
 IMG_SIZE   = 128   # thumbnail side in pixels
 BLOCK_SIZE = 4     # block side in pixels
-GRID       = 3     # spatial grid is GRID x GRID regions
+GRID       = 4     # spatial grid is GRID x GRID regions
 
 
 # ===========================================================================
