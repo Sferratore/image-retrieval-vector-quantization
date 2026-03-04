@@ -10,7 +10,7 @@ CODEBOOKS_DIR = ROOT / "data" / "codebooks"
 # --- Parameters: must match build_codebooks.py exactly ---
 # If any of these differ from what was used to build the codebooks,
 # the feature vectors will be incompatible and results will be meaningless.
-IMG_SIZE   = 128   # thumbnail side in pixels
+IMG_SIZE   = 256   # thumbnail side in pixels
 BLOCK_SIZE = 4     # block side in pixels
 GRID       = 4     # spatial grid is GRID x GRID regions
 

@@ -5,7 +5,7 @@ from pathlib import Path
 input_dir = Path(__file__).parent.parent / "data" / "raw"
 output_dir = Path(__file__).parent.parent / "data" / "processed"
 
-size = 128
+size = 256
 
 for img_path in input_dir.rglob("*"):
     if img_path.suffix.lower() not in [".jpg", ".jpeg", ".png"]:
