@@ -47,16 +47,16 @@ def preprocess(img_path):
 # ===========================================================================
 # STEP 2 — FEATURE EXTRACTION
 # Identical to build_codebooks.py.
-# Divide the image into blocks and describe each block with 6 numbers.
+# Divide the image into blocks and describe each block with 9 numbers.
 # ===========================================================================
 
 def extract_block_features(img):
     """
     Divide the image into non-overlapping BLOCK_SIZE x BLOCK_SIZE blocks
-    and compute a 6-dim feature vector per block: [mean_L, mean_u, mean_v, var_L, var_u, var_v].
+    and compute a 9-dim feature vector per block: [mean_L, mean_u, mean_v, var_L, var_u, var_v, skew_L, skew_u, skew_v].
 
     Returns:
-        np.ndarray of shape (n_blocks, 6)
+        np.ndarray of shape (n_blocks, 9)
     """
     h, w, _ = img.shape
 
@@ -76,8 +76,13 @@ def extract_block_features(img):
             # Color variance per channel across the block's pixels → [var_L, var_u, var_v]
             var  = block.var(axis=(0, 1))
 
-            # Combine into one 6-dim feature vector and store it
-            feats.append(np.concatenate([mean, var]))
+            # Skewness per channel: mean of (x - mean)^3 / std^3 → [skew_L, skew_u, skew_v]
+            # Small epsilon avoids division by zero in uniform blocks
+            std  = np.sqrt(var) + 1e-6
+            skew = np.mean((block - mean) ** 3, axis=(0, 1)) / (std ** 3)
+
+            # Combine into one 9-dim feature vector and store it
+            feats.append(np.concatenate([mean, var, skew]))
 
     # Stack all vectors into a 2D array: one row per block
     return np.array(feats)
