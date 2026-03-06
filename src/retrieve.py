@@ -14,6 +14,11 @@ IMG_SIZE   = 256   # thumbnail side in pixels
 BLOCK_SIZE = 4     # block side in pixels
 GRID       = 4     # spatial grid is GRID x GRID regions
 
+# Fixed normalization scale — must match build_codebooks.py exactly.
+# Divides each feature by its theoretical maximum so all 9 dimensions
+# are in roughly the same [0, 1] range and contribute equally to distances.
+NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256, 4, 4, 4], dtype=np.float64)
+
 
 # ===========================================================================
 # STEP 1 — PREPROCESSING
@@ -85,7 +90,11 @@ def extract_block_features(img):
             feats.append(np.concatenate([mean, var, skew]))
 
     # Stack all vectors into a 2D array: one row per block
-    return np.array(feats)
+    feats = np.array(feats)
+
+    # Divide each feature by its known maximum so all dimensions are in ~[0, 1].
+    # Must use the same NORM_SCALE as build_codebooks.py.
+    return feats / NORM_SCALE
 
 
 def assign_regions(n_blocks_y, n_blocks_x):
@@ -162,19 +171,14 @@ def get_query_signature(img):
 
 def region_mse(query_vectors, codebook):
     """
-    Quantize each query vector using the given codebook and return the
-    mean squared error (MSE) across all vectors in this region.
+    Quantize each query vector against the codebook and return the MSE.
 
-    For each query vector:
-      - find the nearest codeword (nearest centroid) in the codebook
-      - compute the squared Euclidean distance to it
-
-    The average of these distances is the MSE for this region.
-    A low MSE means the codebook describes the query region well → high similarity.
+    Query vectors are already normalized by NORM_SCALE (done in extract_block_features),
+    and so are the codewords (built from normalized features). The spaces match.
 
     Args:
-        query_vectors: np.ndarray (n, 6)
-        codebook:      np.ndarray (k, 6)
+        query_vectors: np.ndarray (n, 9) — already normalized
+        codebook:      np.ndarray (k, 9) — codewords in the same normalized space
 
     Returns:
         float: mean squared quantization error for this region
@@ -184,7 +188,7 @@ def region_mse(query_vectors, codebook):
     for vec in query_vectors:
 
         # Compute squared Euclidean distance from this vector to every codeword
-        # Result shape: (k, ) — one distance per codeword
+        # Result shape: (k,) — one distance per codeword
         squared_dists = np.sum((codebook - vec) ** 2, axis=1)
 
         # Add the distance to the nearest codeword (best match)
@@ -213,7 +217,7 @@ def score_against_db_image(query_signature, codebooks):
         mse = region_mse(query_signature[r], codebooks[r])
         regional_mses.append(mse)
 
-    # Aggregate: simple mean across all 9 regions
+    # Aggregate: simple mean across all regions
     return float(np.mean(regional_mses))
 
 
@@ -243,11 +247,11 @@ def retrieve(query_path, top_k=10):
     # --- Score the query against every DB image ---
     for cb_file in CODEBOOKS_DIR.rglob("*.npz"):
 
-        # Load the 9 regional codebooks for this DB image
+        # Load the codebooks for this DB image
         data      = np.load(cb_file, allow_pickle=True)
         codebooks = data['codebooks']
 
-        # Compute the mean MSE across all 9 regions
+        # Compute the mean MSE across all regions
         score = score_against_db_image(query_signature, codebooks)
 
         # Read the category directly from the parent folder name

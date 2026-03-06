@@ -12,6 +12,13 @@ BLOCK_SIZE = 4   # size in pixels of each block (BLOCK_SIZE x BLOCK_SIZE)
 GRID = 4         # image is divided into a GRID x GRID spatial grid of regions
 K = 12           # number of codewords per codebook (VQ codebook size)
 
+# Fixed normalization scale: divides each feature by its theoretical maximum
+# so all 9 features end up in roughly the same [0, 1] range.
+# mean channels:     max is 255 (uint8 pixel value)
+# variance channels: max is 255²/4 = 16256 (worst-case for any block)
+# skewness channels: max absolute value ≈ 4 for 4×4 blocks
+NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256, 4, 4, 4], dtype=np.float64)
+
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -76,9 +83,12 @@ def extract_block_features(img):
             feats.append(feat)
 
     # Convert the Python list of 9-number vectors into a 2D NumPy array.
-    # Final shape: (number_of_blocks, 9).
-    # Each row is one block, each column is one feature.
-    return np.array(feats)
+    # Final shape: (number_of_blocks, 9). Each row is one block, each column is one feature.
+    feats = np.array(feats)
+
+    # Divide each feature by its known maximum so all dimensions are in ~[0, 1].
+    # This prevents high-scale features (variance) from dominating the distance.
+    return feats / NORM_SCALE
 
 
 def assign_regions(n_blocks_y, n_blocks_x):
@@ -150,17 +160,18 @@ def build_codebooks(img):
 
     For each of the GRID*GRID regions:
       - collect block feature vectors belonging to that region
+        (already normalized to ~[0,1] by extract_block_features)
       - run k-means with K clusters to obtain the codebook (cluster centers)
 
     Returns:
-        codebooks: list of GRID*GRID arrays, each of shape (k, 6)
+        codebooks: list of GRID*GRID arrays, each of shape (k, 9)
     """
     h, w, _ = img.shape
 
     n_blocks_y = h // BLOCK_SIZE
     n_blocks_x = w // BLOCK_SIZE
 
-    features = extract_block_features(img)             # (n_blocks, 6)
+    features   = extract_block_features(img)                        # (n_blocks, 9)
     region_ids = assign_regions(n_blocks_y, n_blocks_x).flatten()  # (n_blocks,)
 
     codebooks = []
@@ -173,7 +184,7 @@ def build_codebooks(img):
         kmeans = KMeans(n_clusters=k, n_init=5)
         kmeans.fit(region_feats)
 
-        codebooks.append(kmeans.cluster_centers_)      # (k, 6)
+        codebooks.append(kmeans.cluster_centers_)      # (k, 9)
 
     return codebooks
 
@@ -186,10 +197,10 @@ for file in INPUT_DIR.rglob("*.jpg"):
 
     codebooks = build_codebooks(img)                   # list of GRID*GRID codebooks
 
-    # Preserve the category subfolder (e.g. data/codebooks/dinosaurs/400.npz)
+    # Preserve the category subfolder (e.g. data/codebooks/Corel-1K/dinosaurs/400.npz)
     # so that category labels can be read directly from the path in retrieve.py
-    relative  = file.relative_to(INPUT_DIR)            # e.g. Corel-1K/dinosaurs/400.jpg
-    save_dir  = OUTPUT_DIR / relative.parent           # e.g. data/codebooks/Corel-1K/dinosaurs
+    relative = file.relative_to(INPUT_DIR)             # e.g. Corel-1K/dinosaurs/400.jpg
+    save_dir = OUTPUT_DIR / relative.parent            # e.g. data/codebooks/Corel-1K/dinosaurs
     save_dir.mkdir(parents=True, exist_ok=True)
 
     save_path = save_dir / (file.stem + ".npz")
