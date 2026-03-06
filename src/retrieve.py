@@ -15,9 +15,9 @@ BLOCK_SIZE = 4     # block side in pixels
 GRID       = 4     # spatial grid is GRID x GRID regions
 
 # Fixed normalization scale — must match build_codebooks.py exactly.
-# Divides each feature by its theoretical maximum so all 9 dimensions
+# Divides each feature by its theoretical maximum so all 6 dimensions
 # are in roughly the same [0, 1] range and contribute equally to distances.
-NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256, 4, 4, 4], dtype=np.float64)
+NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256], dtype=np.float64)
 
 
 # ===========================================================================
@@ -58,10 +58,10 @@ def preprocess(img_path):
 def extract_block_features(img):
     """
     Divide the image into non-overlapping BLOCK_SIZE x BLOCK_SIZE blocks
-    and compute a 9-dim feature vector per block: [mean_L, mean_u, mean_v, var_L, var_u, var_v, skew_L, skew_u, skew_v].
+    and compute a 6-dim feature vector per block: [mean_L, mean_u, mean_v, var_L, var_u, var_v].
 
     Returns:
-        np.ndarray of shape (n_blocks, 9)
+        np.ndarray of shape (n_blocks, 6)
     """
     h, w, _ = img.shape
 
@@ -81,13 +81,8 @@ def extract_block_features(img):
             # Color variance per channel across the block's pixels → [var_L, var_u, var_v]
             var  = block.var(axis=(0, 1))
 
-            # Skewness per channel: mean of (x - mean)^3 / std^3 → [skew_L, skew_u, skew_v]
-            # Small epsilon avoids division by zero in uniform blocks
-            std  = np.sqrt(var) + 1e-6
-            skew = np.mean((block - mean) ** 3, axis=(0, 1)) / (std ** 3)
-
-            # Combine into one 9-dim feature vector and store it
-            feats.append(np.concatenate([mean, var, skew]))
+            # Combine into one 6-dim feature vector and store it
+            feats.append(np.concatenate([mean, var]))
 
     # Stack all vectors into a 2D array: one row per block
     feats = np.array(feats)

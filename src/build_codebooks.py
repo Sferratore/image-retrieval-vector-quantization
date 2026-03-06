@@ -13,11 +13,10 @@ GRID = 4         # image is divided into a GRID x GRID spatial grid of regions
 K = 12           # number of codewords per codebook (VQ codebook size)
 
 # Fixed normalization scale: divides each feature by its theoretical maximum
-# so all 9 features end up in roughly the same [0, 1] range.
+# so all 6 features end up in roughly the same [0, 1] range.
 # mean channels:     max is 255 (uint8 pixel value)
 # variance channels: max is 255²/4 = 16256 (worst-case for any block)
-# skewness channels: max absolute value ≈ 4 for 4×4 blocks
-NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256, 4, 4, 4], dtype=np.float64)
+NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256], dtype=np.float64)
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -27,17 +26,17 @@ def extract_block_features(img):
     Divide the image into non-overlapping blocks of size BLOCK_SIZE x BLOCK_SIZE
     and extract a 9-dim feature vector from each block.
 
-    Feature vector: [mean_L, mean_u, mean_v, var_L, var_u, var_v, skew_L, skew_u, skew_v]
+    Feature vector: [mean_L, mean_u, mean_v, var_L, var_u, var_v]
 
     Returns:
-        feats: np.ndarray of shape (n_blocks, 9)
+        feats: np.ndarray of shape (n_blocks, 6)
     """
     # img is a 3D array: (height, width, 3 channels).
     # We read its dimensions here. The _ discards the third value (Determines L, u o v)
     # because we don't need to store the channel count explicitly.
     h, w, _ = img.shape
 
-    # Empty list that will collect one 9-number vector for each block.
+    # Empty list that will collect one 6-number vector for each block.
     # At the end this list will have as many entries as there are blocks in the image.
     feats = []
 
@@ -69,21 +68,15 @@ def extract_block_features(img):
             # Same axis logic as above. Result: [var_L, var_u, var_v].
             var = block.var(axis=(0,1))
 
-            # Compute skewness per channel: mean of (x - mean)^3 / std^3.
-            # Measures whether pixel values lean toward dark or bright within the block.
-            # A small epsilon (1e-6) avoids division by zero in uniform blocks.
-            std  = np.sqrt(var) + 1e-6
-            skew = np.mean((block - mean) ** 3, axis=(0,1)) / (std ** 3)
-
-            # Concatenate mean, variance and skewness into a single 9-dim vector:
-            # [mean_L, mean_u, mean_v, var_L, var_u, var_v, skew_L, skew_u, skew_v].
-            feat = np.concatenate([mean, var, skew])
+            # Concatenate mean and variance into a single 6-dim vector:
+            # [mean_L, mean_u, mean_v, var_L, var_u, var_v].
+            feat = np.concatenate([mean, var])
 
             # Append this block's feature vector to the list.
             feats.append(feat)
 
-    # Convert the Python list of 9-number vectors into a 2D NumPy array.
-    # Final shape: (number_of_blocks, 9). Each row is one block, each column is one feature.
+    # Convert the Python list of 6-number vectors into a 2D NumPy array.
+    # Final shape: (number_of_blocks, 6). Each row is one block, each column is one feature.
     feats = np.array(feats)
 
     # Divide each feature by its known maximum so all dimensions are in ~[0, 1].
