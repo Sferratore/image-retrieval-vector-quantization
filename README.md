@@ -48,7 +48,7 @@ This ensures that mean and variance contribute equally to distances. Without nor
 
 The block grid is divided into a **4×4 spatial grid** of 16 regions. This encodes spatial information — a blue sky at the top of an image is treated differently from blue water at the bottom.
 
-For each region of each database image, **k-means clustering** (K=12) is run on the block feature vectors in that region. In brief, **k-means clustering** takes k random feature vectors and assigns all the others to the most similar of the k. For each group created, avg gets calculated and so we get 12 cluster centers or centroids. The resulting 12 cluster centers form the **codebook** for that region.
+For each region of each database image, **k-means clustering** (K=12) is run on the block feature vectors in that region. k-means places 12 centroids at random positions, assigns every vector to its nearest centroid, then recomputes each centroid as the average of its assigned vectors, repeating until assignments stabilize. To reduce the impact of the random initialization, this whole process is run **5 times** (`n_init=5`) from different starting points and the result with the lowest distortion is kept. The resulting 12 cluster centers form the **codebook** for that region.
 
 Each database image is therefore represented by **16 codebooks** (one per region), each containing 12 codewords of 6 features. These are saved to disk.
 
