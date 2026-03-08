@@ -13,6 +13,7 @@ CODEBOOKS_DIR = ROOT / "data" / "codebooks"
 IMG_SIZE   = 256   # thumbnail side in pixels
 BLOCK_SIZE = 4     # block side in pixels
 GRID       = 4     # spatial grid is GRID x GRID regions
+DEPTH      = 4     # TSVQ tree depth: must match build_codebooks.py
 
 # Fixed normalization scale — must match build_codebooks.py exactly.
 # Divides each feature by its theoretical maximum so all 6 dimensions
@@ -164,16 +165,47 @@ def get_query_signature(img):
 # measure the reconstruction error (MSE). Lower error = more similar.
 # ===========================================================================
 
-def region_mse(query_vectors, codebook):
+def traverse_tree(vec, tree):
     """
-    Quantize each query vector against the codebook and return the MSE.
+    Follow the TSVQ tree from the root to the leaf that best represents vec.
 
-    Query vectors are already normalized by NORM_SCALE (done in extract_block_features),
-    and so are the codewords (built from normalized features). The spaces match.
+    At each internal node, compare the vector to the left and right child
+    centroids and descend toward the nearer one. Repeat DEPTH times to
+    reach a leaf. Return the squared distance between vec and that leaf.
 
     Args:
-        query_vectors: np.ndarray (n, 9) — already normalized
-        codebook:      np.ndarray (k, 9) — codewords in the same normalized space
+        vec:  np.ndarray (6,) — one normalized block feature vector
+        tree: np.ndarray (n_nodes, 6) — flat TSVQ tree using heap indexing
+
+    Returns:
+        float: squared distance from vec to its leaf codeword
+    """
+    node_idx = 0
+
+    for _ in range(DEPTH):
+        left  = 2 * node_idx + 1
+        right = 2 * node_idx + 2
+
+        dist_left  = np.sum((tree[left]  - vec) ** 2)
+        dist_right = np.sum((tree[right] - vec) ** 2)
+
+        # Descend toward the nearer child
+        node_idx = left if dist_left <= dist_right else right
+
+    # Return the squared distance at the leaf we landed on
+    return float(np.sum((tree[node_idx] - vec) ** 2))
+
+
+def region_mse(query_vectors, tree):
+    """
+    Quantize each query vector by traversing the TSVQ tree and return the MSE.
+
+    Query vectors are already normalized by NORM_SCALE (done in extract_block_features),
+    and so are the tree centroids (built from normalized features). The spaces match.
+
+    Args:
+        query_vectors: np.ndarray (n, 6) — already normalized
+        tree:          np.ndarray (n_nodes, 6) — TSVQ flat tree in the same normalized space
 
     Returns:
         float: mean squared quantization error for this region
@@ -181,13 +213,7 @@ def region_mse(query_vectors, codebook):
     total_error = 0.0
 
     for vec in query_vectors:
-
-        # Compute squared Euclidean distance from this vector to every codeword
-        # Result shape: (k,) — one distance per codeword
-        squared_dists = np.sum((codebook - vec) ** 2, axis=1)
-
-        # Add the distance to the nearest codeword (best match)
-        total_error += squared_dists.min()
+        total_error += traverse_tree(vec, tree)
 
     # Divide by number of vectors to get the mean error
     return total_error / len(query_vectors)

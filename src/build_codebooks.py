@@ -3,14 +3,14 @@ import cv2
 from pathlib import Path
 from sklearn.cluster import KMeans
 
-# Input: preprocessed images as .jpg (256x256, CIE Luv*)
-# Output: per-image .npz files each containing GRID*GRID codebooks
+# Input: preprocessed images as .jpg (256x256, BGR)
+# Output: per-image .npz files each containing GRID*GRID TSVQ trees
 INPUT_DIR = Path(__file__).parent.parent / "data" / "processed"
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "codebooks"
 
 BLOCK_SIZE = 4   # size in pixels of each block (BLOCK_SIZE x BLOCK_SIZE)
-GRID = 4         # image is divided into a GRID x GRID spatial grid of regions
-K = 12           # number of codewords per codebook (VQ codebook size)
+GRID       = 4   # image is divided into a GRID x GRID spatial grid of regions
+DEPTH      = 4   # TSVQ tree depth: 2^DEPTH leaf codewords per region
 
 # Fixed normalization scale: divides each feature by its theoretical maximum
 # so all 6 features end up in roughly the same [0, 1] range.
@@ -147,39 +147,92 @@ def assign_regions(n_blocks_y, n_blocks_x):
     return region_map
 
 
+def build_tsvq_region(vectors, tree, node_idx, current_depth):
+    """
+    Recursively build a TSVQ binary tree for one region, modifying tree in place.
+
+    At each node, split the vectors into 2 groups using k-means (k=2, n_init=5).
+    The 2 resulting centroids are stored as the left and right children of the
+    current node in the flat tree array. Then recurse on each group.
+
+    The flat tree array uses heap indexing: node at index i has children at
+    indices 2i+1 (left) and 2i+2 (right). Root is at index 0.
+
+    Args:
+        vectors:       feature vectors for this node, shape (n, 6)
+        tree:          flat tree array of shape (2^(DEPTH+1)-1, 6), modified in place
+        node_idx:      index of the current node in the flat tree array
+        current_depth: depth of the current node (root = 0, leaves = DEPTH)
+    """
+    # Base case: reached the desired leaf depth, stop recursing
+    if current_depth == DEPTH:
+        return
+
+    left_idx  = 2 * node_idx + 1
+    right_idx = 2 * node_idx + 2
+
+    # If too few distinct points to split, copy the current centroid to both
+    # children so the tree remains valid without a meaningful split
+    if len(np.unique(vectors, axis=0)) < 2:
+        tree[left_idx]  = tree[node_idx]
+        tree[right_idx] = tree[node_idx]
+        build_tsvq_region(vectors, tree, left_idx,  current_depth + 1)
+        build_tsvq_region(vectors, tree, right_idx, current_depth + 1)
+        return
+
+    # Split into 2 groups; run 5 times and keep the lowest-distortion result
+    kmeans = KMeans(n_clusters=2, n_init=5)
+    kmeans.fit(vectors)
+
+    # Store the 2 child centroids at their positions in the flat tree array
+    tree[left_idx]  = kmeans.cluster_centers_[0]
+    tree[right_idx] = kmeans.cluster_centers_[1]
+
+    # Recurse on each group
+    build_tsvq_region(vectors[kmeans.labels_ == 0], tree, left_idx,  current_depth + 1)
+    build_tsvq_region(vectors[kmeans.labels_ == 1], tree, right_idx, current_depth + 1)
+
+
 def build_codebooks(img):
     """
-    Build one VQ codebook per spatial region for a single image.
+    Build one TSVQ tree per spatial region for a single image.
 
     For each of the GRID*GRID regions:
-      - collect block feature vectors belonging to that region
-        (already normalized to ~[0,1] by extract_block_features)
-      - run k-means with K clusters to obtain the codebook (cluster centers)
+      - collect block feature vectors (already normalized to ~[0,1])
+      - recursively build a binary tree of depth DEPTH using k-means (k=2)
+
+    The tree is stored as a flat array using heap indexing:
+      - node at index i has children at 2i+1 and 2i+2
+      - root is at index 0 (its centroid = overall mean of the region)
+      - leaves are at indices 2^DEPTH - 1 to 2^(DEPTH+1) - 2
 
     Returns:
-        codebooks: list of GRID*GRID arrays, each of shape (k, 9)
+        trees: np.ndarray of shape (GRID*GRID, n_nodes, 6)
+               where n_nodes = 2^(DEPTH+1) - 1
     """
     h, w, _ = img.shape
 
     n_blocks_y = h // BLOCK_SIZE
     n_blocks_x = w // BLOCK_SIZE
 
-    features   = extract_block_features(img)                        # (n_blocks, 9)
+    features   = extract_block_features(img)                        # (n_blocks, 6)
     region_ids = assign_regions(n_blocks_y, n_blocks_x).flatten()  # (n_blocks,)
 
-    codebooks = []
+    # Total nodes in a complete binary tree of depth DEPTH
+    n_nodes = 2 ** (DEPTH + 1) - 1
+
+    trees = np.zeros((GRID * GRID, n_nodes, 6))
 
     for r in range(GRID * GRID):
-        region_feats = features[region_ids == r]       # blocks belonging to region r
+        region_feats = features[region_ids == r]
 
-        k = min(K, len(region_feats))                  # guard: k <= number of samples
+        # Root centroid = overall mean of the region's vectors
+        trees[r, 0] = region_feats.mean(axis=0)
 
-        kmeans = KMeans(n_clusters=k, n_init=5)
-        kmeans.fit(region_feats)
+        # Recursively build the tree starting from the root
+        build_tsvq_region(region_feats, trees[r], 0, 0)
 
-        codebooks.append(kmeans.cluster_centers_)      # (k, 9)
-
-    return codebooks
+    return trees
 
 
 # --- Main loop: process every preprocessed image ---
@@ -188,7 +241,7 @@ for file in INPUT_DIR.rglob("*.jpg"):
     img = cv2.imread(str(file))                        # load (128, 128, 3) BGR image
     img = cv2.cvtColor(img, cv2.COLOR_BGR2Luv)         # convert to Luv inline
 
-    codebooks = build_codebooks(img)                   # list of GRID*GRID codebooks
+    codebooks = build_codebooks(img)                   # shape (GRID*GRID, n_nodes, 6) TSVQ trees
 
     # Preserve the category subfolder (e.g. data/codebooks/Corel-1K/dinosaurs/400.npz)
     # so that category labels can be read directly from the path in retrieve.py
