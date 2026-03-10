@@ -166,31 +166,26 @@ def get_query_signature(img):
 
 def region_mse(query_vectors, codebook):
     """
-    Quantize each query vector against the codebook and return the MSE.
+    Quantize all query vectors against the codebook and return the MSE.
+
+    All n vectors are compared to all k codewords simultaneously using numpy
+    broadcasting — no Python loop over individual vectors.
 
     Query vectors are already normalized by NORM_SCALE (done in extract_block_features),
     and so are the codewords (built from normalized features). The spaces match.
 
     Args:
-        query_vectors: np.ndarray (n, 9) — already normalized
-        codebook:      np.ndarray (k, 9) — codewords in the same normalized space
+        query_vectors: np.ndarray (n, 6) — already normalized
+        codebook:      np.ndarray (k, 6) — codewords in the same normalized space
 
     Returns:
         float: mean squared quantization error for this region
     """
-    total_error = 0.0
+    # (n, 1, 6) - (k, 6) broadcasts to (n, k, 6) — all distances in one shot
+    dists = np.sum((query_vectors[:, np.newaxis, :] - codebook) ** 2, axis=2)  # (n, k)
 
-    for vec in query_vectors:
-
-        # Compute squared Euclidean distance from this vector to every codeword
-        # Result shape: (k,) — one distance per codeword
-        squared_dists = np.sum((codebook - vec) ** 2, axis=1)
-
-        # Add the distance to the nearest codeword (best match)
-        total_error += squared_dists.min()
-
-    # Divide by number of vectors to get the mean error
-    return total_error / len(query_vectors)
+    # For each vector, take the distance to its nearest codeword, then average
+    return float(np.mean(dists.min(axis=1)))
 
 
 def score_against_db_image(query_signature, codebooks):
