@@ -248,13 +248,36 @@ def score_against_db_image(query_signature, codebooks):
 # DB images, sort by ascending score, return the top-k results.
 # ===========================================================================
 
-def retrieve(query_path, top_k=10):
+def load_all_codebooks():
+    """
+    Load every database codebook from disk into a list in memory.
+
+    Call this once before a batch of queries so that each retrieve() call
+    iterates over RAM instead of re-reading the same files from disk.
+
+    Returns:
+        list of dicts, each with keys: 'codebooks', 'stem', 'category'
+    """
+    db = []
+    for cb_file in CODEBOOKS_DIR.rglob("*.npz"):
+        data = np.load(cb_file, allow_pickle=True)
+        db.append({
+            'codebooks': data['codebooks'],
+            'stem':      cb_file.stem,
+            'category':  cb_file.parent.name,
+        })
+    return db
+
+
+def retrieve(query_path, top_k=10, db=None):
     """
     Given a query image path, return the top_k most similar database images.
 
     Args:
         query_path: path to the query image (any format readable by OpenCV)
         top_k:      number of results to return
+        db:         pre-loaded codebook list from load_all_codebooks().
+                    If None, codebooks are loaded from disk on every call.
 
     Returns:
         list of dicts, each with keys: 'rank', 'image', 'category', 'score'
@@ -263,26 +286,18 @@ def retrieve(query_path, top_k=10):
     img             = preprocess(query_path)
     query_signature = get_query_signature(img)
 
+    # --- Load codebooks from disk if not pre-loaded ---
+    if db is None:
+        db = load_all_codebooks()
+
     results = []
 
     # --- Score the query against every DB image ---
-    for cb_file in CODEBOOKS_DIR.rglob("*.npz"):
-
-        # Load the codebooks for this DB image
-        data      = np.load(cb_file, allow_pickle=True)
-        codebooks = data['codebooks']
-
-        # Compute the mean MSE across all regions
-        score = score_against_db_image(query_signature, codebooks)
-
-        # Read the category directly from the parent folder name
-        # e.g. data/codebooks/Corel-1K/dinosaurs/400.npz → 'dinosaurs'
-        stem     = cb_file.stem
-        category = cb_file.parent.name
-
+    for entry in db:
+        score = score_against_db_image(query_signature, entry['codebooks'])
         results.append({
-            'image':    stem,
-            'category': category,
+            'image':    entry['stem'],
+            'category': entry['category'],
             'score':    score,
         })
 

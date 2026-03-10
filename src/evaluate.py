@@ -5,7 +5,7 @@ from pathlib import Path
 
 # Allow importing retrieve() from retrieve.py in the same folder
 sys.path.insert(0, str(Path(__file__).parent))
-from retrieve import retrieve
+from retrieve import retrieve, load_all_codebooks
 
 # --- Paths ---
 ROOT          = Path(__file__).parent.parent
@@ -88,6 +88,9 @@ n_queries = len(img_paths)
 
 print(f"Found {n_queries} images. Starting evaluation...\n")
 
+# Load all codebooks into RAM once — avoids re-reading from disk on every query
+db = load_all_codebooks()
+
 # Accumulate interpolated PR curves: one row per query
 all_curves = []
 
@@ -103,7 +106,7 @@ for i, img_path in enumerate(img_paths, 1):
 
     # Step 2 — Retrieve all DB images ranked by similarity
     # top_k=1000 retrieves every image in the database
-    results = retrieve(img_path, top_k=1000)
+    results = retrieve(img_path, top_k=1000, db=db)
 
     # Step 3 — Compute precision-recall curve for this query
     precisions, recalls = compute_pr_curve(results, query_stem, query_category)
