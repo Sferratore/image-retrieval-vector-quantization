@@ -165,40 +165,13 @@ def get_query_signature(img):
 # measure the reconstruction error (MSE). Lower error = more similar.
 # ===========================================================================
 
-def traverse_tree(vec, tree):
-    """
-    Follow the TSVQ tree from the root to the leaf that best represents vec.
-
-    At each internal node, compare the vector to the left and right child
-    centroids and descend toward the nearer one. Repeat DEPTH times to
-    reach a leaf. Return the squared distance between vec and that leaf.
-
-    Args:
-        vec:  np.ndarray (6,) — one normalized block feature vector
-        tree: np.ndarray (n_nodes, 6) — flat TSVQ tree using heap indexing
-
-    Returns:
-        float: squared distance from vec to its leaf codeword
-    """
-    node_idx = 0
-
-    for _ in range(DEPTH):
-        left  = 2 * node_idx + 1
-        right = 2 * node_idx + 2
-
-        dist_left  = np.sum((tree[left]  - vec) ** 2)
-        dist_right = np.sum((tree[right] - vec) ** 2)
-
-        # Descend toward the nearer child
-        node_idx = left if dist_left <= dist_right else right
-
-    # Return the squared distance at the leaf we landed on
-    return float(np.sum((tree[node_idx] - vec) ** 2))
-
-
 def region_mse(query_vectors, tree):
     """
-    Quantize each query vector by traversing the TSVQ tree and return the MSE.
+    Quantize all query vectors in a region by traversing the TSVQ tree in
+    parallel and return the MSE.
+
+    All 256 vectors descend the tree together at each depth step using numpy
+    broadcasting — no Python loop over individual vectors.
 
     Query vectors are already normalized by NORM_SCALE (done in extract_block_features),
     and so are the tree centroids (built from normalized features). The spaces match.
@@ -210,13 +183,22 @@ def region_mse(query_vectors, tree):
     Returns:
         float: mean squared quantization error for this region
     """
-    total_error = 0.0
+    # All vectors start at the root (index 0)
+    node_indices = np.zeros(len(query_vectors), dtype=np.intp)  # shape (n,)
 
-    for vec in query_vectors:
-        total_error += traverse_tree(vec, tree)
+    for _ in range(DEPTH):
+        left  = 2 * node_indices + 1                                      # shape (n,)
+        right = 2 * node_indices + 2                                      # shape (n,)
 
-    # Divide by number of vectors to get the mean error
-    return total_error / len(query_vectors)
+        dist_left  = np.sum((tree[left]  - query_vectors) ** 2, axis=1)  # shape (n,)
+        dist_right = np.sum((tree[right] - query_vectors) ** 2, axis=1)  # shape (n,)
+
+        # Each vector independently descends toward its nearer child
+        node_indices = np.where(dist_left <= dist_right, left, right)    # shape (n,)
+
+    # Compute squared distance from each vector to its leaf codeword
+    leaf_vecs = tree[node_indices]                                        # shape (n, 6)
+    return float(np.mean(np.sum((leaf_vecs - query_vectors) ** 2, axis=1)))
 
 
 def score_against_db_image(query_signature, codebooks):
