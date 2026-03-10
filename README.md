@@ -85,40 +85,40 @@ All 1000 database images are scored against the query and sorted by ascending MS
 
 ## Evaluation
 
-The system was evaluated on the full **Corel-1K** dataset (1000 images, 10 categories, 100 images each). Every image was used as a query and the remaining 999 images were ranked. Precision-recall was computed using standard **11-point interpolation**, averaged over all 1000 queries.
+The system was evaluated on the full **Corel-1K** dataset (1000 images, 10 categories, 100 images each). Every image was used as a query and the remaining 999 images were ranked. Precision-recall was computed using standard **11-point interpolation**, averaged over all 1000 queries. Codebooks are built using **TSVQ with tree depth d = 4**, producing 2⁴ = 16 leaf codewords per region.
 
 ### Overall Precision-Recall
 
 | Recall | Precision |
 |--------|-----------|
-| 0.0    | 0.8695    |
-| 0.1    | 0.6301    |
-| 0.2    | 0.5329    |
-| 0.3    | 0.4713    |
-| 0.4    | 0.4216    |
-| 0.5    | 0.3797    |
-| 0.6    | 0.3406    |
-| 0.7    | 0.3042    |
-| 0.8    | 0.2684    |
-| 0.9    | 0.2323    |
-| 1.0    | 0.1728    |
+| 0.0    | 0.8672    |
+| 0.1    | 0.6258    |
+| 0.2    | 0.5269    |
+| 0.3    | 0.4665    |
+| 0.4    | 0.4170    |
+| 0.5    | 0.3754    |
+| 0.6    | 0.3356    |
+| 0.7    | 0.3004    |
+| 0.8    | 0.2633    |
+| 0.9    | 0.2270    |
+| 1.0    | 0.1685    |
 
-**Mean Average Precision (MAP): 0.4203**
+**Mean Average Precision (MAP): 0.4158**
 
 ### Per-Category MAP
 
 | Category   | MAP    |
 |------------|--------|
-| dinosaurs  | 0.9096 |
-| horses     | 0.5214 |
-| buses      | 0.4693 |
-| africans   | 0.4685 |
-| food       | 0.3958 |
-| flowers    | 0.3600 |
-| elephants  | 0.3240 |
-| mountains  | 0.2685 |
-| buildings  | 0.2599 |
-| beaches    | 0.2263 |
+| dinosaurs  | 0.8785 |
+| horses     | 0.5275 |
+| buses      | 0.4285 |
+| africans   | 0.4692 |
+| food       | 0.3972 |
+| flowers    | 0.3526 |
+| elephants  | 0.3272 |
+| mountains  | 0.2776 |
+| buildings  | 0.2678 |
+| beaches    | 0.2319 |
 
 Categories with distinctive color distributions (dinosaurs, horses, buses) score significantly higher. Categories with overlapping color distributions (beaches, mountains, buildings) are harder to separate using color statistics alone.
 
