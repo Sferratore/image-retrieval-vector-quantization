@@ -13,7 +13,7 @@ CODEBOOKS_DIR = ROOT / "data" / "codebooks"
 IMG_SIZE   = 256   # thumbnail side in pixels
 BLOCK_SIZE = 4     # block side in pixels
 GRID       = 4     # spatial grid is GRID x GRID regions
-DEPTH      = 4     # TSVQ tree depth: must match build_codebooks.py
+DEPTH      = 3     # TSVQ tree depth: must match build_codebooks.py
 
 # Fixed normalization scale — must match build_codebooks.py exactly.
 # Divides each feature by its theoretical maximum so all 6 dimensions
