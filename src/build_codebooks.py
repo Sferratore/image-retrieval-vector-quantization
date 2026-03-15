@@ -10,7 +10,7 @@ OUTPUT_DIR = Path(__file__).parent.parent / "data" / "codebooks"
 
 BLOCK_SIZE = 4   # size in pixels of each block (BLOCK_SIZE x BLOCK_SIZE)
 GRID = 4         # image is divided into a GRID x GRID spatial grid of regions
-K = 12           # number of codewords per codebook (VQ codebook size)
+K = 8            # number of codewords per codebook (VQ codebook size)
 
 # Fixed normalization scale: divides each feature by its theoretical maximum
 # so all 6 features end up in roughly the same [0, 1] range.
