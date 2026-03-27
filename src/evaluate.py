@@ -94,7 +94,7 @@ db = load_all_codebooks()
 # Accumulate interpolated PR curves: one row per query
 all_curves = []
 
-# Also accumulate per-category curves
+# Also accumulate per-category curves11
 category_curves = {}
 
 for i, img_path in enumerate(img_paths, 1):

@@ -1,0 +1,1011 @@
+\documentclass[12pt, a4paper]{article}
+\usepackage[italian]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+\usepackage{geometry}
+\usepackage{float}
+\usepackage{caption}
+
+\geometry{top=3cm, bottom=3cm, left=3cm, right=3cm}
+
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.97,0.97,0.97}
+
+\lstdefinestyle{pythonstyle}{
+    backgroundcolor=\color{backcolour},
+    commentstyle=\color{codegreen}\itshape,
+    keywordstyle=\color{blue}\bfseries,
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\small,
+    breakatwhitespace=false,
+    breaklines=true,
+    captionpos=b,
+    keepspaces=true,
+    numbers=left,
+    numbersep=5pt,
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    tabsize=4,
+    language=Python,
+    frame=single,
+    rulecolor=\color{codegray}
+}
+\lstset{style=pythonstyle}
+\renewcommand{\lstlistingname}{Listato}
+
+\title{\textbf{Retrieval di Immagini tramite Vector Quantization}\\[0.5em]
+\large Implementazione e Confronto tra Flat VQ e Tree-Structured VQ\\[0.3em]
+sul Dataset Corel-1K}
+\author{Francesco Paolo Sferratore}
+\date{16/03/2026}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% ==============================================================================
+\section{Introduzione}
+% ==============================================================================
+
+Il \textit{recupero di immagini basato sul contenuto} (Content-Based Image Retrieval, CBIR)
+studia come trovare automaticamente immagini simili in un archivio, senza fare affidamento
+su descrizioni testuali o tag assegnati manualmente. Dato un archivio e un'immagine di
+interrogazione (\textit{query}), l'obiettivo è restituire le immagini dell'archivio ordinate
+per somiglianza visiva.
+
+Il presente lavoro implementa un sistema CBIR basato sulla \textit{Vector Quantization} (VQ).
+L'idea è descrivere ogni immagine con un insieme compatto di vettori rappresentativi
+(\textit{codeword}), detti \textit{codebook}. Due immagini con colori simili produrranno
+codebook simili; confrontando il codebook di un'immagine del database con i vettori di
+colore della query si ottiene una misura di quanto le due immagini si assomigliano.
+
+\subsection*{Dataset}
+Il sistema è stato valutato sul dataset \textbf{Corel-1K}, un benchmark standard per CBIR.
+Contiene 1000 immagini suddivise in 10 categorie semantiche, 100 immagini per categoria:
+\begin{center}
+\textit{africans, beaches, buildings, buses, dinosaurs, elephants, flowers, food, horses, mountains}
+\end{center}
+Le immagini rilevanti per una query sono quelle della stessa categoria semantica.
+
+\subsection*{Struttura del lavoro}
+Sono state implementate e confrontate due varianti:
+\begin{itemize}
+    \item \textbf{Flat VQ}: codebook piatto con $K=8$ centroidi per regione, costruito
+          tramite k-means.
+    \item \textbf{TSVQ} (Tree-Structured VQ): codebook a struttura ad albero binario di
+          profondità $d=3$, che produce $2^3 = 8$ codeword foglia per regione.
+\end{itemize}
+Entrambi producono 8 codeword per regione, rendendo il confronto equo.
+
+Il lavoro è organizzato come segue: la Sezione~\ref{sec:flatvq} descrive l'algoritmo Flat VQ,
+la Sezione~\ref{sec:impl_flatvq} la sua implementazione, la Sezione~\ref{sec:tsvq} l'algoritmo
+TSVQ, la Sezione~\ref{sec:impl_tsvq} la sua implementazione, la Sezione~\ref{sec:valutazione}
+il confronto teorico, e la Sezione~\ref{sec:evaluation} i risultati sperimentali.
+
+% ==============================================================================
+\section{Algoritmo Flat VQ}
+\label{sec:flatvq}
+% ==============================================================================
+
+\subsection{Spazio colore CIE L*u*v*}
+
+Le immagini vengono convertite da RGB allo spazio colore \textbf{CIE L*u*v*} prima di
+qualsiasi elaborazione. CIE L*u*v* è uno spazio percettivamente uniforme: distanze uguali
+in questo spazio corrispondono a differenze di colore percepite come uguali dall'occhio
+umano. In RGB questo non vale: due coppie di colori con la stessa distanza numerica possono
+sembrare all'occhio molto diverse tra loro.
+
+Il canale $L^*$ rappresenta la luminosità, mentre $u^*$ e $v^*$ rappresentano le componenti
+cromatiche.
+
+\subsection{Suddivisione in blocchi}
+
+Ogni immagine viene ridimensionata a \textbf{256$\times$256 pixel} per uniformare la
+risoluzione di tutte le immagini nel database. L'immagine viene poi divisa in blocchi
+non sovrapposti di \textbf{4$\times$4 pixel}. Con una risoluzione di 256$\times$256 si
+ottengono $64 \times 64 = 4096$ blocchi per immagine, ciascuno contenente 16 pixel.
+
+La dimensione 4$\times$4 è un compromesso: blocchi più piccoli aumentano la risoluzione
+spaziale ma rendono instabili le stime statistiche (troppo pochi pixel); blocchi più grandi
+stabilizzano le stime ma perdono il dettaglio locale.
+
+\subsection{Vettore di feature per blocco}
+
+Per ogni blocco si calcolano la \textbf{media} e la \textbf{varianza} del colore per
+ciascuno dei tre canali L*, u*, v*. Si ottiene un vettore di 6 valori:
+\[
+\mathbf{f} = [\,\mu_L,\; \mu_u,\; \mu_v,\; \sigma^2_L,\; \sigma^2_u,\; \sigma^2_v\,]
+\]
+La \textbf{media} descrive il colore dominante del blocco. La \textbf{varianza} misura
+quanto il colore varia all'interno del blocco: un valore basso indica un blocco uniforme
+(ad esempio un pezzo di cielo), un valore alto indica variazione cromatica (ad esempio
+un contorno o una texture).
+
+Si è scelto di non includere la \textbf{skewness} (il terzo momento statistico), nonostante
+possa catturare asimmetrie nella distribuzione del colore. Su blocchi 4$\times$4 di soli
+16 pixel la sua stima risulta troppo rumorosa per essere discriminativa; i test sperimentali
+hanno confermato che includerla peggiorava i risultati.
+
+\subsection{Normalizzazione delle feature}
+
+Media e varianza operano su scale molto diverse: i valori medi appartengono all'intervallo
+$[0, 255]$, mentre le varianze possono arrivare fino a $255^2/4 = 16256$ nel caso peggiore.
+Senza correzione, le varianze dominerebbero completamente il calcolo delle distanze.
+
+Per rendere tutte le dimensioni comparabili, ogni feature viene divisa per il suo massimo
+teorico:
+\begin{itemize}
+    \item medie: divise per 255
+    \item varianze: divise per 16256
+\end{itemize}
+Dopo la normalizzazione tutti i valori appartengono all'intervallo $[0, 1]$ e contribuiscono
+equamente alle distanze.
+
+\subsection{Griglia spaziale}
+
+I 4096 blocchi dell'immagine vengono assegnati a una \textbf{griglia 4$\times$4 di regioni},
+per un totale di 16 regioni. Ogni regione contiene $16 \times 16 = 256$ blocchi.
+
+La griglia spaziale codifica la posizione: senza di essa, due immagini con gli stessi colori
+ma disposti diversamente nello spazio sarebbero indistinguibili. Con la griglia, il cielo in
+alto e il prato in basso contribuiscono a regioni diverse, permettendo al sistema di
+distinguere composizioni spazialmente differenti. Le regioni sono numerate in ordine
+riga-per-riga da 0 a 15.
+
+\subsection{Costruzione del codebook con k-means}
+
+Per ogni regione di ogni immagine del database, si applica l'algoritmo \textbf{k-means} con
+$K=8$ cluster ai 256 vettori di feature di quella regione. K-means trova 8 centroidi che
+rappresentano i gruppi di colori più ricorrenti nella regione; l'insieme di questi 8 centroidi
+è il \textit{codebook} della regione.
+
+Poiché k-means è sensibile al punto di partenza casuale, viene eseguito \textbf{5 volte}
+(\texttt{n\_init=5}) mantenendo il risultato con distorsione minima. Ogni immagine è
+descritta da $16 \times 8 = 128$ centroidi in totale.
+
+\subsection{Misura di similarità: MSE di quantizzazione}
+
+Il principio del retrieval è il seguente: se un'immagine del database $I$ è simile alla
+query $Q$, il codebook di $I$ -- costruito per descrivere i colori di $I$ -- riuscirà a
+rappresentare bene anche i colori di $Q$, producendo un errore di approssimazione basso.
+
+Per misurare questo errore, si prende ogni blocco della query e si trova il codeword del
+database più vicino. La distanza al quadrato tra il blocco e il suo codeword più vicino è
+l'errore di quantizzazione di quel blocco. Il \textbf{punteggio di dissimilarità} tra query
+e immagine è la media di questi errori su tutti i blocchi e tutte le regioni: più è basso,
+più le due immagini si assomigliano. Le immagini del database vengono ordinate per punteggio
+crescente e le prime vengono restituite come risultato.
+
+% ==============================================================================
+\section{Implementazione Flat VQ}
+\label{sec:impl_flatvq}
+% ==============================================================================
+
+Il sistema Flat VQ è implementato in quattro script Python: \texttt{preprocess.py},
+\texttt{build\_codebooks.py}, \texttt{retrieve.py} ed \texttt{evaluate.py}.
+
+\subsection{Modulo di preprocessing: \texttt{preprocess.py}}
+
+Ridimensiona ogni immagine grezza a 256$\times$256 pixel e la salva in
+\texttt{data/processed/}, preservando la struttura delle sottocartelle di categoria.
+
+\begin{lstlisting}[caption={Ciclo principale di \texttt{preprocess.py}}]
+for img_path in input_dir.rglob("*"):
+    if img_path.suffix.lower() not in [".jpg", ".jpeg", ".png"]:
+        continue
+    img = cv2.imread(str(img_path))
+    img = cv2.resize(img, (size, size))
+    save_path = save_dir / (img_path.stem + ".jpg")
+    cv2.imwrite(str(save_path), img)
+\end{lstlisting}
+
+\textbf{Scelte implementative:}
+\begin{itemize}
+    \item Le immagini vengono salvate in formato BGR senza convertirle in L*u*v*. La
+          conversione di spazio colore avviene in memoria in \texttt{build\_codebooks.py},
+          appena prima dell'estrazione delle feature, evitando di degradare le immagini
+          salvate con una ricompressione in uno spazio non standard.
+    \item Il ridimensionamento usa l'interpolazione bilineare predefinita di OpenCV,
+          adeguata per questo tipo di applicazione.
+\end{itemize}
+
+\subsection{Modulo di costruzione dei codebook: \texttt{build\_codebooks.py}}
+
+Questo script costruisce i codebook per tutte le immagini del database e li salva su disco.
+
+\subsubsection{Parametri globali}
+
+\begin{lstlisting}[caption={Parametri di configurazione di \texttt{build\_codebooks.py}}]
+BLOCK_SIZE = 4
+GRID       = 4
+K          = 8
+NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256], dtype=np.float64)
+\end{lstlisting}
+
+I parametri sono definiti come costanti globali. Devono essere identici in
+\texttt{retrieve.py}: codebook costruiti con certi parametri sono utilizzabili solo con
+lo stesso preprocessing nella fase di query.
+
+\subsubsection{Funzione \texttt{extract\_block\_features}}
+
+\begin{lstlisting}[caption={Funzione \texttt{extract\_block\_features}}]
+def extract_block_features(img):
+    h, w, _ = img.shape
+    feats = []
+    for y in range(0, h, BLOCK_SIZE):
+        for x in range(0, w, BLOCK_SIZE):
+            block = img[y:y+BLOCK_SIZE, x:x+BLOCK_SIZE]
+            mean = block.mean(axis=(0, 1))
+            var  = block.var(axis=(0, 1))
+            feats.append(np.concatenate([mean, var]))
+    feats = np.array(feats)
+    return feats / NORM_SCALE
+\end{lstlisting}
+
+La funzione scorre l'immagine blocco per blocco con due cicli annidati. Per ogni blocco
+4$\times$4 calcola media e varianza per canale (L*, u*, v*), concatena i sei valori in un
+vettore e lo aggiunge alla lista. Al termine, divide l'intero array per \texttt{NORM\_SCALE}
+in un'unica operazione vettoriale, producendo un array di forma $(4096, 6)$.
+
+\subsubsection{Funzione \texttt{assign\_regions}}
+
+\begin{lstlisting}[caption={Funzione \texttt{assign\_regions}}]
+def assign_regions(n_blocks_y, n_blocks_x):
+    region_map = np.zeros((n_blocks_y, n_blocks_x), dtype=int)
+    ry = n_blocks_y // GRID
+    rx = n_blocks_x // GRID
+    r = 0
+    for gy in range(GRID):
+        for gx in range(GRID):
+            y0, y1 = gy * ry, (gy + 1) * ry
+            x0, x1 = gx * rx, (gx + 1) * rx
+            region_map[y0:y1, x0:x1] = r
+            r += 1
+    return region_map
+\end{lstlisting}
+
+Costruisce una mappa 2D della stessa forma della griglia di blocchi, dove ogni cella contiene
+l'ID di regione (da 0 a 15) del blocco corrispondente. L'assegnazione avviene tramite slicing
+NumPy sull'area rettangolare di ogni regione, senza loop sui singoli blocchi.
+
+\subsubsection{Funzione \texttt{build\_codebooks}}
+
+\begin{lstlisting}[caption={Funzione \texttt{build\_codebooks} (Flat VQ)}]
+def build_codebooks(img):
+    h, w, _ = img.shape
+    n_blocks_y = h // BLOCK_SIZE
+    n_blocks_x = w // BLOCK_SIZE
+    features   = extract_block_features(img)
+    region_ids = assign_regions(n_blocks_y, n_blocks_x).flatten()
+    codebooks = []
+    for r in range(GRID * GRID):
+        region_feats = features[region_ids == r]
+        k = min(K, len(region_feats))
+        kmeans = KMeans(n_clusters=k, n_init=5)
+        kmeans.fit(region_feats)
+        codebooks.append(kmeans.cluster_centers_)
+    return codebooks
+\end{lstlisting}
+
+La funzione estrae le feature di tutti i blocchi, ne determina la regione di appartenenza,
+e per ognuna delle 16 regioni esegue k-means sui soli 256 vettori di quella regione.
+
+La riga \texttt{k = min(K, len(region\_feats))} è una guardia di robustezza: impedisce di
+chiamare k-means con più cluster che punti disponibili, cosa che causerebbe un errore.
+
+\subsubsection{Ciclo principale e salvataggio}
+
+\begin{lstlisting}[caption={Ciclo principale di \texttt{build\_codebooks.py}}]
+for file in INPUT_DIR.rglob("*.jpg"):
+    img = cv2.imread(str(file))
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2Luv)
+    codebooks = build_codebooks(img)
+    relative = file.relative_to(INPUT_DIR)
+    save_dir  = OUTPUT_DIR / relative.parent
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_path = save_dir / (file.stem + ".npz")
+    np.savez(save_path, codebooks=codebooks)
+\end{lstlisting}
+
+Per ogni immagine, la conversione in L*u*v* avviene in memoria appena prima dell'estrazione
+delle feature. Il percorso di salvataggio replica la struttura delle sottocartelle originali,
+in modo che la categoria di ogni immagine sia leggibile direttamente dal percorso del file
+\texttt{.npz}, senza bisogno di file di metadati separati.
+
+\subsection{Modulo di recupero: \texttt{retrieve.py}}
+
+Implementa la pipeline di query: data un'immagine di interrogazione, restituisce la lista
+delle immagini del database ordinate per similarità.
+
+\subsubsection{Funzioni \texttt{preprocess} ed \texttt{extract\_block\_features}}
+
+Queste funzioni sono \textbf{identiche} alle corrispondenti in \texttt{build\_codebooks.py}.
+È un requisito fondamentale: se i vettori di feature della query fossero estratti in modo
+diverso da quelli del database, le distanze calcolate non avrebbero senso.
+
+\subsubsection{Funzione \texttt{get\_query\_signature}}
+
+\begin{lstlisting}[caption={Funzione \texttt{get\_query\_signature}}]
+def get_query_signature(img):
+    h, w, _ = img.shape
+    n_blocks_y = h // BLOCK_SIZE
+    n_blocks_x = w // BLOCK_SIZE
+    features   = extract_block_features(img)
+    region_ids = assign_regions(n_blocks_y, n_blocks_x).flatten()
+    signature = []
+    for r in range(GRID * GRID):
+        region_feats = features[region_ids == r]
+        signature.append(region_feats)
+    return signature
+\end{lstlisting}
+
+Per la query \textbf{non viene eseguito k-means}. Si raccolgono semplicemente i vettori di
+feature raggruppati per regione. Questi vettori verranno poi confrontati con i codeword dei
+codebook del database durante la fase di scoring. La funzione restituisce una lista di 16
+array, uno per regione, ciascuno di forma $(256, 6)$.
+
+\subsubsection{Funzione \texttt{region\_mse}}
+
+\begin{lstlisting}[caption={Funzione \texttt{region\_mse} (Flat VQ) con broadcasting NumPy}]
+def region_mse(query_vectors, codebook):
+    dists = np.sum(
+        (query_vectors[:, np.newaxis, :] - codebook) ** 2,
+        axis=2
+    )  # shape: (n, K)
+    return float(np.mean(dists.min(axis=1)))
+\end{lstlisting}
+
+Per ogni blocco della query, trova il codeword del database più vicino e registra la distanza
+al quadrato. Il risultato finale è la media di queste distanze su tutti i blocchi della
+regione.
+
+\textbf{Ottimizzazione vettoriale}: invece di iterare in Python su ciascuno dei 256 vettori
+uno alla volta, tutti i confronti (256 vettori contro 8 codeword) vengono eseguiti in
+un'unica operazione NumPy tramite broadcasting. Questo riduce le chiamate al motore NumPy
+da 256 a 1, eliminando l'overhead di invocazione ripetuta su array piccoli. Considerando
+che questa funzione viene chiamata 16 milioni di volte in una valutazione completa, il
+risparmio è decisivo: il tempo di esecuzione scende da giorni a meno di un'ora.
+
+\subsubsection{Funzione \texttt{score\_against\_db\_image}}
+
+\begin{lstlisting}[caption={Funzione \texttt{score\_against\_db\_image}}]
+def score_against_db_image(query_signature, codebooks):
+    regional_mses = []
+    for r in range(GRID * GRID):
+        mse = region_mse(query_signature[r], codebooks[r])
+        regional_mses.append(mse)
+    return float(np.mean(regional_mses))
+\end{lstlisting}
+
+Calcola l'MSE per ognuna delle 16 regioni e restituisce la loro media come punteggio
+complessivo di dissimilarità tra la query e un'immagine del database.
+
+\subsubsection{Funzione \texttt{load\_all\_codebooks}}
+
+\begin{lstlisting}[caption={Funzione \texttt{load\_all\_codebooks}}]
+def load_all_codebooks():
+    db = []
+    for cb_file in CODEBOOKS_DIR.rglob("*.npz"):
+        data = np.load(cb_file, allow_pickle=True)
+        db.append({
+            'codebooks': data['codebooks'],
+            'stem':      cb_file.stem,
+            'category':  cb_file.parent.name,
+        })
+    return db
+\end{lstlisting}
+
+Carica in RAM tutti i codebook del database. Viene chiamata una sola volta prima del ciclo
+di query: senza questa ottimizzazione, ogni query rileggeva da disco gli stessi 1000 file,
+per un totale di un milione di letture ridondanti in una valutazione completa.
+
+\subsubsection{Funzione \texttt{retrieve}}
+
+\begin{lstlisting}[caption={Funzione \texttt{retrieve}}]
+def retrieve(query_path, top_k=10, db=None):
+    img             = preprocess(query_path)
+    query_signature = get_query_signature(img)
+    if db is None:
+        db = load_all_codebooks()
+    results = []
+    for entry in db:
+        score = score_against_db_image(query_signature, entry['codebooks'])
+        results.append({
+            'image':    entry['stem'],
+            'category': entry['category'],
+            'score':    score,
+        })
+    results.sort(key=lambda x: x['score'])
+    for i, r in enumerate(results, 1):
+        r['rank'] = i
+    return results[:top_k]
+\end{lstlisting}
+
+Esegue la pipeline completa: preprocessa la query, ne estrae la firma, calcola il punteggio
+contro ogni immagine del database, ordina per punteggio crescente e restituisce le prime
+\texttt{top\_k}. Il parametro \texttt{db} consente di passare i codebook già caricati in
+memoria, oppure di ometterlo per un utilizzo autonomo su singola query.
+
+\subsection{Modulo di valutazione: \texttt{evaluate.py}}
+
+Misura la qualità del retrieval sull'intero dataset, usando ogni immagine a turno come query
+e valutando le altre 999 come candidati.
+
+\subsubsection{Funzione \texttt{compute\_pr\_curve}}
+
+\begin{lstlisting}[caption={Funzione \texttt{compute\_pr\_curve}}]
+def compute_pr_curve(results, query_stem, query_category):
+    precisions, recalls = [], []
+    n_correct, rank = 0, 0
+    for r in results:
+        if r['image'] == query_stem:
+            continue
+        rank += 1
+        if r['category'] == query_category:
+            n_correct += 1
+        precisions.append(n_correct / rank)
+        recalls.append(n_correct / N_RELEVANT)
+    return precisions, recalls
+\end{lstlisting}
+
+Scorre la lista dei risultati ordinati per punteggio. Per ogni posizione, calcola la
+\textbf{precisione} (quanti dei risultati visti finora sono rilevanti) e il \textbf{richiamo}
+(quale frazione delle immagini rilevanti totali è stata già trovata). La query stessa viene
+saltata perché avrebbe sempre punteggio nullo e si troverebbe in cima alla classifica.
+Con 100 immagini per categoria (meno la query), $N_{\text{rel}} = 99$.
+
+\subsubsection{Funzione \texttt{interpolate\_precision}}
+
+\begin{lstlisting}[caption={Interpolazione a 11 punti}]
+def interpolate_precision(recalls, precisions):
+    recalls    = np.array(recalls)
+    precisions = np.array(precisions)
+    interp = []
+    for r in RECALL_LEVELS:
+        mask = recalls >= r
+        interp.append(precisions[mask].max() if mask.any() else 0.0)
+    return np.array(interp)
+\end{lstlisting}
+
+Implementa l'interpolazione standard a \textbf{11 punti}: per ognuno degli 11 livelli di
+richiamo $\{0.0, 0.1, \ldots, 1.0\}$, la precisione interpolata è il massimo della
+precisione osservata a qualsiasi richiamo maggiore o uguale a quel livello. Questo leviga
+la curva, eliminando le oscillazioni dovute all'ordine dei risultati non rilevanti.
+
+La \textbf{Average Precision} (AP) di una query è la media delle 11 precisioni interpolate.
+La \textbf{Mean Average Precision} (MAP) è la media delle AP su tutte le 1000 query ed è
+la metrica principale di valutazione del sistema.
+
+\subsubsection{Ciclo di valutazione}
+
+Il ciclo principale carica i codebook in RAM una sola volta, poi usa ogni immagine come
+query, recupera l'intera classifica (\texttt{top\_k=1000}), calcola la curva P-R interpolata
+e la accumula per categoria. Al termine stampa MAP globale, MAP per categoria e salva il
+grafico delle curve P-R.
+
+% ==============================================================================
+\section{Algoritmo Tree-Structured VQ (TSVQ)}
+\label{sec:tsvq}
+% ==============================================================================
+
+\subsection{Motivazione}
+
+La Flat VQ costruisce il codebook trovando $K$ cluster tutti in una volta su tutti i vettori
+di una regione. Questo approccio ha due limiti:
+\begin{enumerate}
+    \item \textbf{Difficoltà di ottimizzazione}: trovare la migliore disposizione di $K$
+          centroidi con inizializzazione casuale è un problema difficile. Con $K$ grande,
+          anche ripetendo k-means 5 volte non è garantito trovare la soluzione migliore.
+    \item \textbf{Ricerca lineare}: per trovare il codeword più vicino a un vettore di query
+          bisogna confrontarlo con tutti i $K$ codeword, uno per uno.
+\end{enumerate}
+La \textbf{Tree-Structured VQ (TSVQ)} affronta entrambi i problemi dividendo il processo
+in una serie di scelte binarie successive, ciascuna molto più semplice.
+
+\subsection{Struttura ad albero binario}
+
+Un albero TSVQ di profondità $d$ è un albero binario completo. Ogni nodo contiene un
+centroide; le foglie sono i codeword finali. Con profondità $d$ si hanno $2^d$ foglie.
+
+L'albero viene memorizzato come array piatto con \textbf{indicizzazione heap}: il nodo
+all'indice $i$ ha i figli agli indici $2i+1$ (sinistro) e $2i+2$ (destro). La radice è
+all'indice 0. Questo consente di rappresentare l'intero albero in un singolo array NumPy
+senza puntatori. Per $d=3$: 15 nodi totali, foglie agli indici 7--14.
+
+\subsection{Costruzione ricorsiva}
+
+L'albero viene costruito ricorsivamente, partendo da tutti i vettori della regione:
+
+\begin{algorithm}[H]
+\caption{Costruzione TSVQ per una regione}
+\begin{algorithmic}[1]
+\Procedure{BuildTSVQ}{$\text{vectors},\; \text{tree},\; \text{node},\; \text{depth}$}
+    \If{$\text{depth} = d$} \Return \EndIf
+    \State $\text{left} \leftarrow 2 \cdot \text{node} + 1$;\quad
+           $\text{right} \leftarrow 2 \cdot \text{node} + 2$
+    \If{tutti i vettori sono identici}
+        \State Copia il centroide del nodo corrente in entrambi i figli
+        \State Continua la ricorsione sui figli con gli stessi vettori
+        \Return
+    \EndIf
+    \State Dividi i vettori in 2 gruppi con k-means ($k=2$, \texttt{n\_init=5})
+    \State Salva i 2 centroidi in \texttt{tree[left]} e \texttt{tree[right]}
+    \State \Call{BuildTSVQ}{gruppo sinistro, tree, left, depth+1}
+    \State \Call{BuildTSVQ}{gruppo destro, tree, right, depth+1}
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+Ad ogni livello si divide il problema in due sotto-problemi: ognuno è un clustering binario
+su un sottoinsieme di vettori già relativamente omogeneo. Un clustering binario è molto più
+semplice di uno con $K$ cluster: con \texttt{n\_init=5} tentativi si trova quasi sempre
+la divisione ottimale.
+
+\subsection{Ricerca del codeword per traversata dell'albero}
+
+Per trovare il codeword più vicino a un vettore di query, si percorre l'albero dalla radice
+alla foglia:
+
+\begin{algorithm}[H]
+\caption{Traversata TSVQ}
+\begin{algorithmic}[1]
+\Procedure{TraverseTSVQ}{$\mathbf{q},\; \text{tree}$}
+    \State $\text{node} \leftarrow 0$ \Comment{parti dalla radice}
+    \For{$\ell = 1$ \textbf{to} $d$}
+        \State $\text{left} \leftarrow 2 \cdot \text{node} + 1$;\quad
+               $\text{right} \leftarrow 2 \cdot \text{node} + 2$
+        \If{il figlio sinistro è più vicino di quello destro}
+            \State $\text{node} \leftarrow \text{left}$
+        \Else
+            \State $\text{node} \leftarrow \text{right}$
+        \EndIf
+    \EndFor
+    \Return $\text{tree}[\text{node}]$ \Comment{codeword foglia}
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+Ad ogni livello si sceglie il figlio più vicino, scendendo fino alla foglia. Con $d=3$ si
+eseguono solo 3 confronti binari (6 distanze calcolate) invece di confrontarsi con tutti gli
+8 codeword della Flat VQ. La traversata è \textit{greedy} -- non torna indietro -- e non
+garantisce di trovare il codeword globalmente più vicino, ma in pratica la perdita di
+accuratezza è trascurabile.
+
+\subsection{Confronto di complessità}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{Metodo} & \textbf{Codeword} & \textbf{Distanze calcolate per vettore (query)} \\
+\midrule
+Flat VQ ($K = 8$) & 8 & 8 \\
+TSVQ ($d = 3$)    & 8 & 6 \\
+\bottomrule
+\end{tabular}
+\caption{Confronto del costo di ricerca del codeword più vicino.}
+\end{table}
+
+Il vantaggio di TSVQ cresce con il numero di codeword: a parità di $K = 2^d$ foglie, la
+Flat VQ costa $K$ distanze per vettore, mentre la TSVQ ne costa $2d = 2\log_2 K$.
+
+% ==============================================================================
+\section{Implementazione TSVQ}
+\label{sec:impl_tsvq}
+% ==============================================================================
+
+L'implementazione TSVQ è nel branch \texttt{TSVQ\_variant} del repository. Le modifiche
+rispetto alla Flat VQ riguardano solo \texttt{build\_codebooks.py} e \texttt{retrieve.py};
+preprocessing, assegnazione delle regioni, valutazione e interfaccia di \texttt{retrieve()}
+rimangono invariati.
+
+\subsection{Modifiche a \texttt{build\_codebooks.py}}
+
+\subsubsection{Funzione \texttt{build\_tsvq\_region}}
+
+\begin{lstlisting}[caption={Funzione ricorsiva \texttt{build\_tsvq\_region}}]
+def build_tsvq_region(vectors, tree, node_idx, current_depth):
+    if current_depth == DEPTH:
+        return
+    left_idx  = 2 * node_idx + 1
+    right_idx = 2 * node_idx + 2
+    if len(np.unique(vectors, axis=0)) < 2:
+        tree[left_idx]  = tree[node_idx]
+        tree[right_idx] = tree[node_idx]
+        build_tsvq_region(vectors, tree, left_idx,  current_depth + 1)
+        build_tsvq_region(vectors, tree, right_idx, current_depth + 1)
+        return
+    kmeans = KMeans(n_clusters=2, n_init=5)
+    kmeans.fit(vectors)
+    tree[left_idx]  = kmeans.cluster_centers_[0]
+    tree[right_idx] = kmeans.cluster_centers_[1]
+    build_tsvq_region(vectors[kmeans.labels_ == 0], tree, left_idx,  current_depth + 1)
+    build_tsvq_region(vectors[kmeans.labels_ == 1], tree, right_idx, current_depth + 1)
+\end{lstlisting}
+
+Punti chiave:
+\begin{itemize}
+    \item \textbf{Caso base}: quando si raggiunge la profondità \texttt{DEPTH} la ricorsione
+          si ferma; le foglie sono già state valorizzate.
+    \item \textbf{Guardia per vettori identici}: se tutti i vettori nella partizione sono
+          identici, k-means con $k=2$ non può dividere nulla. I due figli ereditano il
+          centroide del nodo corrente e la ricorsione continua, producendo un albero
+          strutturalmente valido anche in questo caso degenere.
+    \item \textbf{Modifica in-place}: l'array \texttt{tree} viene modificato direttamente
+          evitando copie intermedie.
+    \item \textbf{Partizionamento tramite} \texttt{labels\_}: la selezione dei vettori per
+          ciascun gruppo avviene tramite indicizzazione booleana NumPy, senza loop Python.
+\end{itemize}
+
+\subsubsection{Funzione \texttt{build\_codebooks} (TSVQ)}
+
+\begin{lstlisting}[caption={Funzione \texttt{build\_codebooks} modificata per TSVQ}]
+def build_codebooks(img):
+    h, w, _ = img.shape
+    n_blocks_y = h // BLOCK_SIZE
+    n_blocks_x = w // BLOCK_SIZE
+    features   = extract_block_features(img)
+    region_ids = assign_regions(n_blocks_y, n_blocks_x).flatten()
+    n_nodes = 2 ** (DEPTH + 1) - 1
+    trees = np.zeros((GRID * GRID, n_nodes, 6))
+    for r in range(GRID * GRID):
+        region_feats = features[region_ids == r]
+        trees[r, 0]  = region_feats.mean(axis=0)
+        build_tsvq_region(region_feats, trees[r], 0, 0)
+    return trees
+\end{lstlisting}
+
+Rispetto alla versione Flat VQ:
+\begin{itemize}
+    \item Il valore di ritorno è un array NumPy di forma $(16, 15, 6)$ -- 16 regioni, 15
+          nodi per albero, 6 feature -- invece di una lista di matrici. Questo rende più
+          efficiente sia il salvataggio che l'indicizzazione durante il retrieval.
+    \item Il nodo radice (indice 0) viene inizializzato con la media di tutti i vettori
+          della regione prima di avviare la ricorsione.
+\end{itemize}
+
+\subsection{Modifiche a \texttt{retrieve.py}}
+
+\subsubsection{Funzione \texttt{region\_mse} (TSVQ)}
+
+\begin{lstlisting}[caption={Funzione \texttt{region\_mse} TSVQ con traversata vettorizzata}]
+def region_mse(query_vectors, tree):
+    node_indices = np.zeros(len(query_vectors), dtype=np.intp)
+    for _ in range(DEPTH):
+        left  = 2 * node_indices + 1
+        right = 2 * node_indices + 2
+        dist_left  = np.sum((tree[left]  - query_vectors) ** 2, axis=1)
+        dist_right = np.sum((tree[right] - query_vectors) ** 2, axis=1)
+        node_indices = np.where(dist_left <= dist_right, left, right)
+    leaf_vecs = tree[node_indices]
+    return float(np.mean(np.sum((leaf_vecs - query_vectors) ** 2, axis=1)))
+\end{lstlisting}
+
+Invece di scendere l'albero un vettore alla volta, tutti i 256 vettori della regione
+scendono \textbf{contemporaneamente} a ogni livello, usando operazioni NumPy vettoriali:
+\begin{itemize}
+    \item \texttt{node\_indices} tiene traccia del nodo corrente per ognuno dei 256 vettori.
+    \item A ogni iterazione (un livello dell'albero), si calcolano gli indici dei figli e
+          le distanze per tutti i vettori in parallelo, e si aggiorna \texttt{node\_indices}
+          con \texttt{np.where}.
+    \item L'indicizzazione \texttt{tree[left]} con un array di indici produce direttamente
+          i centroidi dei figli sinistri per tutti i vettori, in un'unica operazione.
+\end{itemize}
+Il ciclo esegue solo \texttt{DEPTH=3} iterazioni, senza nessun loop Python sui singoli
+vettori.
+
+\subsection{Selezione della profondità}
+\label{subsec:depth}
+
+\subsubsection{Metodologia di test}
+
+La profondità $d$ controlla il numero di codeword ($2^d$) e influenza la qualità del codebook
+in due direzioni opposte: profondità bassa significa pochi codeword e scarsa capacità
+discriminativa; profondità alta significa molti codeword ma foglie costruite su pochi vettori,
+rendendo i centroidi inaffidabili. Si attende quindi un ottimo a profondità intermedia.
+
+Sono state testate le profondità $d \in \{2, 3, 4, 5, 6\}$ confrontando con il baseline
+Flat VQ con $K=12$ (configurazione in uso al momento di questa fase sperimentale, prima
+dell'allineamento finale a $K=8$).
+
+\subsubsection{Risultati}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lrrrrrrr}
+\toprule
+\textbf{Categoria} & \textbf{Flat VQ} & \textbf{d=2} & \textbf{d=3} & \textbf{d=4}
+    & \textbf{d=5} & \textbf{d=6} \\
+\midrule
+dinosaurs  & 0.9096 & 0.9722 & 0.9327 & 0.8785 & 0.8278 & 0.7949 \\
+horses     & 0.5214 & 0.5205 & 0.5224 & 0.5275 & 0.5185 & 0.5042 \\
+buses      & 0.4693 & 0.3464 & 0.4035 & 0.4285 & 0.4343 & 0.4381 \\
+africans   & 0.4685 & 0.4554 & 0.4720 & 0.4692 & 0.4713 & 0.4704 \\
+food       & 0.3958 & 0.3518 & 0.3752 & 0.3972 & 0.4114 & 0.4150 \\
+flowers    & 0.3600 & 0.4251 & 0.3833 & 0.3526 & 0.3296 & 0.3104 \\
+elephants  & 0.3240 & 0.3454 & 0.3355 & 0.3272 & 0.3183 & 0.3096 \\
+mountains  & 0.2685 & 0.2845 & 0.2835 & 0.2776 & 0.2674 & 0.2570 \\
+buildings  & 0.2599 & 0.2569 & 0.2690 & 0.2678 & 0.2636 & 0.2569 \\
+beaches    & 0.2263 & 0.2648 & 0.2454 & 0.2319 & 0.2196 & 0.2103 \\
+\midrule
+\textbf{MAP} & \textbf{0.4203} & \textbf{0.4223} & \textbf{0.4223} & 0.4158 & 0.4062 & 0.3967 \\
+\bottomrule
+\end{tabular}
+\caption{MAP per categoria al variare della profondità TSVQ. La colonna ``Flat VQ'' usa
+$K=12$ (baseline della fase sperimentale, prima dell'allineamento a $K=8$).}
+\label{tab:depth}
+\end{table}
+
+\subsubsection{Analisi e scelta finale}
+
+\begin{itemize}
+    \item \textbf{d=2 e d=3 producono la stessa MAP globale (0.4223)}, entrambi superiori
+          al baseline Flat VQ (0.4203). Da d=4 in poi la MAP scende monotonicamente fino a
+          0.3967 a d=6, peggiore del baseline.
+    \item \textbf{Categorie con distribuzione cromatica compatta} come dinosaurs, flowers,
+          beaches ed elephants ottengono i risultati migliori a profondità basse. I loro
+          colori sono concentrati in pochi gruppi naturali che un piccolo numero di codeword
+          descrive già bene; profondità maggiori frammentano questi gruppi in modo eccessivo.
+    \item \textbf{Categorie con distribuzione cromatica complessa} come buses e food
+          migliorano con profondità crescente, ma non abbastanza da compensare le categorie
+          che peggiorano.
+    \item \textbf{Da d=5 in poi tutte le categorie peggiorano}: con $2^5=32$ foglie su 256
+          vettori, ogni foglia è costruita in media su 8 vettori, troppo pochi per stimare
+          un centroide affidabile.
+\end{itemize}
+
+\textbf{Scelta finale: d=3}. Pur producendo la stessa MAP di d=2, genera un codebook più
+espressivo (8 foglie invece di 4), catturando più variazione intra-regione senza sacrificare
+la stabilità. Con circa 32 vettori per foglia in media la stima dei centroidi rimane robusta,
+e il codebook risultante è più ricco di informazione discriminativa.
+
+% ==============================================================================
+\section{Valutazione teorica dei due algoritmi}
+\label{sec:valutazione}
+% ==============================================================================
+
+In questa sezione si confrontano Flat VQ e TSVQ dal punto di vista teorico. I risultati
+sperimentali sono nella Sezione~\ref{sec:evaluation}.
+
+\subsection{Complessità di costruzione del codebook}
+
+La costruzione è una fase offline, eseguita una volta sola.
+
+\textbf{Flat VQ} esegue k-means con $K$ cluster su 256 vettori per ogni regione. Il costo
+cresce linearmente con $K$: raddoppiare i codeword raddoppia il tempo di costruzione.
+
+\textbf{TSVQ} esegue k-means binario ($k=2$) a ogni livello. Il costo totale cresce con la
+profondità $d$, ma poiché $d = \log_2 K$, il costo scala in modo logaritmico rispetto al
+numero di codeword. Per $K$ grande, costruire un albero TSVQ è significativamente più
+veloce che eseguire k-means con $K$ cluster in un colpo solo.
+
+\subsection{Complessità di retrieval}
+
+\textbf{Flat VQ}: trovare il codeword più vicino richiede confrontare il vettore di query
+con tutti i $K$ codeword. Il costo scala linearmente con $K$.
+
+\textbf{TSVQ}: la traversata richiede $d$ confronti binari, indipendentemente da quante
+foglie ci siano. Poiché $d = \log_2 K$, il costo scala logaritmicamente: raddoppiare i
+codeword aggiunge un solo livello all'albero, non raddoppia il costo.
+
+\subsection{Qualità del codebook}
+
+\textbf{Flat VQ} ottimizza globalmente la posizione di tutti i $K$ centroidi insieme. Con
+$K$ grande e inizializzazione casuale è difficile trovare la soluzione ottimale: due centroidi
+possono finire vicini tra loro lasciando scoperta un'area della distribuzione.
+
+\textbf{TSVQ} ottimizza localmente ogni split binario. Dividere un insieme di vettori in due
+gruppi è un problema molto più semplice: con \texttt{n\_init=5} si trova quasi sempre la
+divisione migliore. I centroidi risultanti tendono a essere più bilanciati e a coprire meglio
+la distribuzione.
+
+Il compromesso è che TSVQ non garantisce l'ottimo globale: la migliore divisione binaria a
+ogni livello non porta necessariamente alla migliore suddivisione complessiva in $2^d$ cluster.
+
+\subsection{Stabilità con dati sparsi}
+
+Con 256 vettori per regione e $K=8$ codeword, entrambi i metodi hanno in media 32 vettori
+per codeword -- una stima ragionevolmente robusta in entrambi i casi.
+
+A profondità maggiori la stabilità di TSVQ peggiora più velocemente: le prime foglie
+costruite tendono a essere più popolate, mentre quelle risultanti da suddivisioni successive
+possono avere pochissimi vettori, amplificando l'instabilità della stima.
+
+\subsection{Occupazione di memoria}
+
+Flat VQ salva solo i $K$ centroidi foglia per ogni regione. TSVQ salva anche i
+$K-1$ nodi interni dell'albero, occupando quasi il doppio della memoria a parità di foglie.
+Per 1000 immagini con $K=8$ e 16 regioni: Flat VQ occupa circa 6 MB, TSVQ circa 11 MB.
+Entrambi i valori sono ampiamente gestibili su hardware moderno.
+
+\subsection{Riepilogo}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lcc}
+\toprule
+\textbf{Aspetto} & \textbf{Flat VQ} & \textbf{TSVQ} \\
+\midrule
+Codeword per regione       & $K$                  & $2^d$ \\
+Costo costruzione          & Lineare in $K$       & Logaritmico in $K$ \\
+Costo retrieval            & Lineare in $K$       & Logaritmico in $K$ \\
+Qualità ottimizzazione     & Globale              & Locale binaria \\
+Ricerca codeword           & Esaustiva (ottimale) & Greedy (subottimale) \\
+Memoria per immagine       & $\sim R \cdot K$     & $\sim R \cdot 2K$ \\
+\bottomrule
+\end{tabular}
+\caption{Confronto riassuntivo tra Flat VQ e TSVQ.}
+\label{tab:summary}
+\end{table}
+
+% ==============================================================================
+\section{Risultati sperimentali}
+\label{sec:evaluation}
+% ==============================================================================
+
+\subsection{Configurazione sperimentale}
+
+I due sistemi condividono tutti i parametri tranne la struttura del codebook:
+\begin{itemize}
+    \item \textbf{Flat VQ}: $K=8$ centroidi per regione, k-means con \texttt{n\_init=5}.
+    \item \textbf{TSVQ}: profondità $d=3$, 8 foglie per regione, k-means binario ricorsivo
+          con \texttt{n\_init=5}.
+\end{itemize}
+Parametri comuni: BLOCK\_SIZE=4, GRID=4, IMG\_SIZE=256, normalizzazione fissa tramite
+NORM\_SCALE, spazio colore CIE L*u*v*, valutazione su 1000 query, metrica MAP con
+interpolazione a 11 punti. Ogni sistema è stato valutato su \textbf{6 esecuzioni
+indipendenti} per stimare la variabilità dovuta all'inizializzazione casuale di k-means.
+
+\subsection{MAP: risultati per esecuzione}
+
+La Tabella~\ref{tab:map_runs} riporta la MAP ottenuta in ciascuna delle 6 esecuzioni
+per entrambi i metodi.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrr}
+\toprule
+\textbf{Esecuzione} & \textbf{Flat VQ ($K=8$)} & \textbf{TSVQ ($d=3$)} \\
+\midrule
+1 & 0.4198 & 0.4222 \\
+2 & 0.4249 & 0.4219 \\
+3 & 0.4247 & 0.4222 \\
+4 & 0.4250 & 0.4222 \\
+5 & 0.4252 & 0.4223 \\
+6 & 0.4255 & 0.4225 \\
+\midrule
+\textbf{Media}  & \textbf{0.4242} & \textbf{0.4222} \\
+\textbf{Min}    & 0.4198          & 0.4219 \\
+\textbf{Max}    & 0.4255          & 0.4225 \\
+\bottomrule
+\end{tabular}
+\caption{MAP per esecuzione e valori medi. Ogni esecuzione ricostruisce i codebook
+da zero con una nuova inizializzazione casuale di k-means.}
+\label{tab:map_runs}
+\end{table}
+
+\subsection{Curva di precisione-richiamo}
+
+La Tabella~\ref{tab:pr} riporta la curva P-R media (su 6 esecuzioni) per entrambi i metodi.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{rrrr}
+\toprule
+\textbf{Richiamo} & \textbf{Flat VQ (media)} & \textbf{TSVQ (media)} & \textbf{$\Delta$} \\
+\midrule
+0.0 & 0.8690 & 0.8659 & +0.0031 \\
+0.1 & 0.6342 & 0.6321 & +0.0021 \\
+0.2 & 0.5362 & 0.5323 & +0.0039 \\
+0.3 & 0.4758 & 0.4718 & +0.0040 \\
+0.4 & 0.4261 & 0.4230 & +0.0031 \\
+0.5 & 0.3842 & 0.3822 & +0.0020 \\
+0.6 & 0.3447 & 0.3435 & +0.0012 \\
+0.7 & 0.3081 & 0.3076 & +0.0005 \\
+0.8 & 0.2726 & 0.2714 & +0.0012 \\
+0.9 & 0.2366 & 0.2357 & +0.0009 \\
+1.0 & 0.1786 & 0.1793 & $-$0.0007 \\
+\midrule
+\textbf{MAP} & \textbf{0.4242} & \textbf{0.4222} & \textbf{+0.0020} \\
+\bottomrule
+\end{tabular}
+\caption{Curva P-R media su 6 esecuzioni. $\Delta$ = Flat VQ $-$ TSVQ (positivo indica
+vantaggio Flat VQ).}
+\label{tab:pr}
+\end{table}
+
+\subsection{Risultati per categoria}
+
+La Tabella~\ref{tab:categories} riporta la MAP media per categoria su 6 esecuzioni.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Categoria} & \textbf{Flat VQ (media)} & \textbf{TSVQ (media)} & \textbf{$\Delta$} \\
+\midrule
+dinosaurs  & 0.9333 & 0.9329 & +0.0004 \\
+horses     & 0.5214 & 0.5232 & $-$0.0018 \\
+buses      & 0.4582 & 0.4037 & \textbf{+0.0545} \\
+africans   & 0.4668 & 0.4688 & $-$0.0020 \\
+food       & 0.3858 & 0.3766 & +0.0092 \\
+flowers    & 0.3785 & 0.3825 & $-$0.0040 \\
+elephants  & 0.3288 & 0.3360 & $-$0.0072 \\
+mountains  & 0.2722 & 0.2832 & $-$0.0110 \\
+buildings  & 0.2625 & 0.2693 & $-$0.0068 \\
+beaches    & 0.2345 & 0.2461 & $-$0.0116 \\
+\midrule
+\textbf{MAP} & \textbf{0.4242} & \textbf{0.4222} & \textbf{+0.0020} \\
+\bottomrule
+\end{tabular}
+\caption{MAP media per categoria su 6 esecuzioni. $\Delta$ = Flat VQ $-$ TSVQ (positivo
+indica vantaggio Flat VQ, negativo indica vantaggio TSVQ).}
+\label{tab:categories}
+\end{table}
+
+\subsection{Analisi dei risultati}
+
+\paragraph{MAP globale e variabilità.}
+La Flat VQ ottiene una MAP media leggermente superiore (0.4242 contro 0.4222), con un margine
+di soli 0.002 punti. Le due metodologie sono quindi sostanzialmente equivalenti in termini
+di accuratezza globale a parità di numero di codeword.
+
+La differenza più rilevante tra i due metodi riguarda la \textbf{stabilità tra esecuzioni}.
+La TSVQ mostra un range di variazione estremamente ridotto: il risultato peggiore è 0.4219
+e il migliore è 0.4225, una differenza di soli 0.0006. La Flat VQ, al contrario, presenta
+un range più ampio: da 0.4198 a 0.4255, con un'escursione di 0.0057. In particolare,
+la prima esecuzione di Flat VQ (MAP=0.4198) è notevolmente inferiore alle altre cinque
+(0.4247--0.4255), a indicare che l'inizializzazione casuale ha prodotto almeno un codebook
+di qualità scadente su alcune immagini. Questo conferma quanto atteso dalla teoria: trovare
+8 cluster ottimali in un colpo solo è più sensibile all'inizializzazione rispetto a una serie
+di split binari.
+
+\paragraph{Analisi per categoria.}
+Il quadro per categoria rivela una situazione più articolata rispetto alla MAP globale.
+La TSVQ risulta migliore in \textbf{7 categorie su 10}: horses, africans, flowers,
+elephants, mountains, buildings e beaches. I vantaggi più marcati si registrano su
+mountains (+0.0110 a favore TSVQ), beaches (+0.0116) e elephants (+0.0072) -- categorie
+con texture e distribuzioni cromatiche variegati che beneficiano del codebook gerarchico.
+
+La Flat VQ prevale invece su \textbf{3 categorie}: dinosaurs (vantaggio trascurabile di
+0.0004), food (+0.0092) e soprattutto \textbf{buses}, con un distacco molto marcato di
++0.0545. La categoria buses rappresenta l'eccezione principale: la distribuzione cromatica
+dei bus (colori vivaci e uniformi, ma diversificati tra le immagini della categoria) sembra
+beneficiare dell'ottimizzazione globale di k-means, mentre i successivi split binari della
+TSVQ non riescono a catturare queste strutture altrettanto efficacemente. Questo risultato
+è coerente con quanto già osservato nella fase di selezione della profondità
+(Tabella~\ref{tab:depth}), dove buses era l'unica categoria a preferire chiaramente la
+Flat VQ su tutti i valori di profondità testati.
+
+\paragraph{Curva P-R.}
+La curva P-R media evidenzia che il vantaggio della Flat VQ è concentrato nella zona a
+\textbf{basso richiamo} (0.0--0.5), dove la precisione è più alta. In questa zona -- che
+corrisponde alle prime posizioni nella classifica, le più importanti per un utente -- la
+Flat VQ mantiene una precisione costantemente superiore di 0.002--0.004 punti. All'estremo
+opposto, a richiamo 1.0 la TSVQ supera marginalmente la Flat VQ (0.1793 contro 0.1786),
+ma le differenze in questa zona sono poco significative.
+
+\paragraph{Conclusione.}
+I due metodi si equivalgono in termini di accuratezza globale a parità di codeword ($K=8$).
+La Flat VQ è leggermente superiore in media (+0.002 MAP) ma più sensibile all'inizializzazione
+casuale. La TSVQ è più stabile e risulta migliore sulla maggioranza delle categorie,
+ma viene penalizzata in modo significativo dalla categoria buses. Quest'ultima si conferma
+un caso anomalo già identificato durante la selezione della profondità. La bilancia pende a favore della Flat VQ nella MAP complessiva.
+
+\end{document}

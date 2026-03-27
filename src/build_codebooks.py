@@ -9,14 +9,14 @@ INPUT_DIR = Path(__file__).parent.parent / "data" / "processed"
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "codebooks"
 
 BLOCK_SIZE = 4   # size in pixels of each block (BLOCK_SIZE x BLOCK_SIZE)
-GRID       = 4   # image is divided into a GRID x GRID spatial grid of regions
-DEPTH      = 3   # TSVQ tree depth: 2^DEPTH leaf codewords per region
+GRID       = 1   # image is divided into a GRID x GRID spatial grid of regions
+DEPTH      = 4   # TSVQ tree depth: 2^DEPTH leaf codewords per region
 
 # Fixed normalization scale: divides each feature by its theoretical maximum
 # so all 6 features end up in roughly the same [0, 1] range.
 # mean channels:     max is 255 (uint8 pixel value)
 # variance channels: max is 255²/4 = 16256 (worst-case for any block)
-NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256], dtype=np.float64)
+NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256, 1442, 519841], dtype=np.float64)
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -36,7 +36,13 @@ def extract_block_features(img):
     # because we don't need to store the channel count explicitly.
     h, w, _ = img.shape
 
-    # Empty list that will collect one 6-number vector for each block.
+    # Compute Sobel gradient magnitude on the L channel for texture features
+    L        = img[:, :, 0].astype(np.float32)
+    Gx       = cv2.Sobel(L, cv2.CV_32F, 1, 0, ksize=3)
+    Gy       = cv2.Sobel(L, cv2.CV_32F, 0, 1, ksize=3)
+    grad_mag = np.sqrt(Gx**2 + Gy**2)
+
+    # Empty list that will collect one 8-number vector for each block.
     # At the end this list will have as many entries as there are blocks in the image.
     feats = []
 
@@ -68,9 +74,14 @@ def extract_block_features(img):
             # Same axis logic as above. Result: [var_L, var_u, var_v].
             var = block.var(axis=(0,1))
 
-            # Concatenate mean and variance into a single 6-dim vector:
-            # [mean_L, mean_u, mean_v, var_L, var_u, var_v].
-            feat = np.concatenate([mean, var])
+            # Gradient features for this block
+            grad_block = grad_mag[y:y+BLOCK_SIZE, x:x+BLOCK_SIZE]
+            mean_grad  = grad_block.mean()
+            var_grad   = grad_block.var()
+
+            # Concatenate into an 8-dim vector:
+            # [mean_L, mean_u, mean_v, var_L, var_u, var_v, mean_grad, var_grad]
+            feat = np.concatenate([mean, var, [mean_grad, var_grad]])
 
             # Append this block's feature vector to the list.
             feats.append(feat)
@@ -221,7 +232,7 @@ def build_codebooks(img):
     # Total nodes in a complete binary tree of depth DEPTH
     n_nodes = 2 ** (DEPTH + 1) - 1
 
-    trees = np.zeros((GRID * GRID, n_nodes, 6))
+    trees = np.zeros((GRID * GRID, n_nodes, 8))
 
     for r in range(GRID * GRID):
         region_feats = features[region_ids == r]

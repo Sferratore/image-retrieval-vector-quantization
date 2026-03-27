@@ -12,13 +12,13 @@ CODEBOOKS_DIR = ROOT / "data" / "codebooks"
 # the feature vectors will be incompatible and results will be meaningless.
 IMG_SIZE   = 256   # thumbnail side in pixels
 BLOCK_SIZE = 4     # block side in pixels
-GRID       = 4     # spatial grid is GRID x GRID regions
-DEPTH      = 3     # TSVQ tree depth: must match build_codebooks.py
+GRID       = 1     # spatial grid is GRID x GRID regions
+DEPTH      = 4     # TSVQ tree depth: must match build_codebooks.py
 
 # Fixed normalization scale — must match build_codebooks.py exactly.
 # Divides each feature by its theoretical maximum so all 6 dimensions
 # are in roughly the same [0, 1] range and contribute equally to distances.
-NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256], dtype=np.float64)
+NORM_SCALE = np.array([255, 255, 255, 16256, 16256, 16256, 1442, 519841], dtype=np.float64)
 
 
 # ===========================================================================
@@ -66,6 +66,12 @@ def extract_block_features(img):
     """
     h, w, _ = img.shape
 
+    # Compute Sobel gradient magnitude on the L channel for texture features
+    L        = img[:, :, 0].astype(np.float32)
+    Gx       = cv2.Sobel(L, cv2.CV_32F, 1, 0, ksize=3)
+    Gy       = cv2.Sobel(L, cv2.CV_32F, 0, 1, ksize=3)
+    grad_mag = np.sqrt(Gx**2 + Gy**2)
+
     # Collect one feature vector per block
     feats = []
 
@@ -82,8 +88,13 @@ def extract_block_features(img):
             # Color variance per channel across the block's pixels → [var_L, var_u, var_v]
             var  = block.var(axis=(0, 1))
 
-            # Combine into one 6-dim feature vector and store it
-            feats.append(np.concatenate([mean, var]))
+            # Gradient features for this block
+            grad_block = grad_mag[y:y+BLOCK_SIZE, x:x+BLOCK_SIZE]
+            mean_grad  = grad_block.mean()
+            var_grad   = grad_block.var()
+
+            # Combine into one 8-dim feature vector and store it
+            feats.append(np.concatenate([mean, var, [mean_grad, var_grad]]))
 
     # Stack all vectors into a 2D array: one row per block
     feats = np.array(feats)
