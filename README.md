@@ -8,7 +8,7 @@ A content-based image retrieval system built on **Vector Quantization (VQ)**. Gi
 
 The system represents each database image as a set of regional codebooks built from its block color statistics. To compare a query image against a database image, the query's block feature vectors are matched against the database image's codebooks and the mean squared error (MSE) is computed. A low MSE means the two images have similar color distributions in the same spatial regions.
 
-### Phase 1 — Preprocessing
+### 1. Preprocessing
 
 Each raw image is resized to a fixed **256×256** thumbnail and saved as a viewable JPEG. This standardizes all images to the same resolution before any feature extraction.
 
@@ -20,7 +20,7 @@ Script: `src/preprocess.py`
 
 ---
 
-### Phase 2 — Feature Extraction
+### 2. Feature Extraction
 
 Each image is converted from RGB to **CIE L\*u\*v\*** color space, which is perceptually uniform (equal distances correspond to equal perceived color differences).
 
@@ -44,9 +44,9 @@ This ensures that mean and variance contribute equally to distances. Without nor
 
 ---
 
-### Phase 3 — Regional Codebook Building
+### 3. Regional Codebook Building
 
-The block grid is divided into a **4×4 spatial grid** of 16 regions. This encodes spatial information — a blue sky at the top of an image is treated differently from blue water at the bottom.
+The block grid is divided into a **4×4 spatial grid** of 16 regions. This encodes spatial information: a blue sky at the top of an image is treated differently from blue water at the bottom.
 
 For each region of each database image, **k-means clustering** (K=12) is run on the block feature vectors in that region. k-means places 12 centroids at random positions, assigns every vector to its nearest centroid, then recomputes each centroid as the average of its assigned vectors, repeating until assignments stabilize. To reduce the impact of the random initialization, this whole process is run **5 times** (`n_init=5`) from different starting points and the result with the lowest distortion is kept. The resulting 12 cluster centers form the **codebook** for that region.
 
@@ -58,7 +58,7 @@ data/codebooks/Corel-1K/<category>/<stem>.npz
 
 ---
 
-### Phase 4 — Query and Similarity Scoring
+### 4. Query and Similarity Scoring
 
 Given a query image:
 
@@ -77,7 +77,7 @@ To compare the query against a database image:
 
 ---
 
-### Phase 5 — Ranking
+### 5. Ranking
 
 All 1000 database images are scored against the query and sorted by ascending MSE. The top-K results are returned with their image ID, category, and score.
 
